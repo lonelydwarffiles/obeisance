@@ -3,12 +3,17 @@ package com.obeisance.app
 import android.app.WallpaperManager
 import android.app.admin.DevicePolicyManager
 import android.app.usage.UsageStatsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import android.view.KeyEvent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -83,6 +88,20 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 result.success(gatherUsageStats())
             }
 
+            "pauseMedia" -> {
+                dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE)
+                result.success(null)
+            }
+
+            "skipMedia" -> {
+                dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT)
+                result.success(null)
+            }
+
+            "getNowPlaying" -> {
+                result.success(getNowPlaying())
+            }
+
             else -> result.notImplemented()
         }
     }
@@ -152,6 +171,34 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         return aggregate
     }
 
+    private fun dispatchMediaKey(keyCode: Int) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+        val upEvent = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+        audioManager.dispatchMediaKeyEvent(downEvent)
+        audioManager.dispatchMediaKeyEvent(upEvent)
+    }
+
+    private fun getNowPlaying(): Map<String, String?> {
+        val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+        val sessionControllers: List<MediaController> = try {
+            val listener = ComponentName(this, NotificationListenerStub::class.java)
+            mediaSessionManager.getActiveSessions(listener)
+        } catch (_: SecurityException) {
+            emptyList()
+        }
+
+        val controller = sessionControllers.firstOrNull { it.metadata != null } ?: return mapOf(
+            "track" to null,
+            "artist" to null
+        )
+        val metadata = controller.metadata
+        return mapOf(
+            "track" to metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE),
+            "artist" to metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
+        )
+    }
+
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             textToSpeech?.language = Locale.getDefault()
@@ -171,3 +218,5 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         private const val USAGE_WINDOW_MS = 24 * 60 * 60 * 1000L
     }
 }
+
+private class NotificationListenerStub

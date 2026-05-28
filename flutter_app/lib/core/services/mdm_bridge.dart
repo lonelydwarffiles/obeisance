@@ -46,4 +46,27 @@ class MdmBridge {
     }
     return response.map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0));
   }
+
+  Future<void> pauseMedia() async {
+    await platform.invokeMethod<void>('pauseMedia');
+  }
+
+  Future<void> skipMedia() async {
+    await platform.invokeMethod<void>('skipMedia');
+  }
+
+  Future<Map<String, String?>> getNowPlaying() async {
+    final response = await platform.invokeMapMethod<String, dynamic>('getNowPlaying');
+    if (response == null) {
+      return const {
+        'track': null,
+        'artist': null,
+      };
+    }
+
+    return {
+      'track': response['track']?.toString(),
+      'artist': response['artist']?.toString(),
+    };
+  }
 }

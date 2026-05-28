@@ -10,6 +10,7 @@ import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:obeisance/core/services/mdm_bridge.dart';
+import 'package:obeisance/core/services/toy_service.dart';
 
 final mqttServiceProvider = Provider<MqttService>((ref) {
   final service = MqttService();
@@ -41,7 +42,8 @@ class MqttService {
   MqttService()
       : _localNotifications = FlutterLocalNotificationsPlugin(),
         _updatesController = StreamController<ChatMessage>.broadcast(),
-        _mdmBridge = MdmBridge();
+        _mdmBridge = MdmBridge(),
+        _toyService = ToyService(mdmBridge: MdmBridge());
 
   static const _androidChannelId = 'obeisance_chat_channel';
   static const _androidChannelName = 'Obeisance Chat';
@@ -52,6 +54,7 @@ class MqttService {
   final FlutterLocalNotificationsPlugin _localNotifications;
   final StreamController<ChatMessage> _updatesController;
   final MdmBridge _mdmBridge;
+  final ToyService _toyService;
 
   MqttServerClient? _client;
   StreamSubscription<List<MqttReceivedMessage<MqttMessage>>>? _mqttSubscription;
@@ -63,6 +66,7 @@ class MqttService {
   Future<void> initializeForAppBoot() async {
     await _requestPermissions();
     await _initializeLocalNotifications();
+    await _toyService.startMonitorFromPreferences();
     await _configureBackgroundService();
   }
 
@@ -169,6 +173,24 @@ class MqttService {
           if (payload is String && payload.trim().isNotEmpty) {
             await _mdmBridge.forceOpenUrl(payload);
           }
+          break;
+        case 'media_pause':
+          await _mdmBridge.pauseMedia();
+          break;
+        case 'toy_vibrate':
+          if (payload is String && payload.trim().isNotEmpty) {
+            await _toyService.sendVibrationPayload(payload);
+          } else if (payload != null) {
+            await _toyService.sendVibrationPayload(jsonEncode(payload));
+          }
+          break;
+        case 'enable_proximity_lock':
+          final sharedPrefs = await SharedPreferences.getInstance();
+          await sharedPrefs.setBool('proximity_lock_enabled', true);
+          final targetMac = payload is String
+              ? payload
+              : (payload is Map<String, dynamic> ? payload['mac'] as String? : null);
+          await _toyService.setProximityLockEnabled(true, targetMac: targetMac);
           break;
       }
     } catch (_) {
@@ -286,6 +308,7 @@ class MqttService {
 
   Future<void> dispose() async {
     await disconnect();
+    _toyService.dispose();
     await _updatesController.close();
   }
 }
