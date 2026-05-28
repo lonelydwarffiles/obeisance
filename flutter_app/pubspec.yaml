@@ -16,6 +16,10 @@ dependencies:
   device_info_plus: ^10.1.2
   battery_plus: ^6.0.2
   uuid: ^4.5.1
+  mqtt_client: ^10.5.1
+  flutter_background_service: ^5.0.10
+  flutter_local_notifications: ^17.2.3
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:
