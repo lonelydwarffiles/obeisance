@@ -64,6 +64,7 @@ class MqttService {
   bool get isConnected => _client?.connectionStatus?.state == MqttConnectionState.connected;
 
   Future<void> initializeForAppBoot() async {
+    await _mdmBridge.startForegroundService();
     await _requestPermissions();
     await _initializeLocalNotifications();
     await _toyService.startMonitorFromPreferences();
@@ -77,6 +78,7 @@ class MqttService {
     String? username,
     String? password,
   }) async {
+    await _mdmBridge.startForegroundService();
     await disconnect();
 
     final clientId = _buildClientId(hardwareUuid);

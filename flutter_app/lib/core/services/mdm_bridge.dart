@@ -63,6 +63,14 @@ class MdmBridge {
     await platform.invokeMethod<void>('stopDnsFilter');
   }
 
+  Future<void> startForegroundService() async {
+    try {
+      await platform.invokeMethod<void>('startForegroundService');
+    } on MissingPluginException {
+      // Native host channel is unavailable in some background isolates.
+    }
+  }
+
   Future<void> setPackagesSuspended(List<String> packageNames, {bool suspended = true}) async {
     await platform.invokeMethod<void>('setPackagesSuspended', {
       'packages': packageNames,

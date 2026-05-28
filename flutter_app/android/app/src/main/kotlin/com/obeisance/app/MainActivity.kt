@@ -22,6 +22,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.view.KeyEvent
+import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -136,6 +137,10 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
 
             "startDnsFilter" -> {
                 startDnsFilter(result)
+            }
+
+            "startForegroundService" -> {
+                startObeisanceForegroundService(result)
             }
 
             "stopDnsFilter" -> {
@@ -330,6 +335,16 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     private fun stopDnsFilter(result: MethodChannel.Result) {
         val stopped = stopService(Intent(this, ObeisanceVpnService::class.java))
         result.success(stopped)
+    }
+
+    private fun startObeisanceForegroundService(result: MethodChannel.Result) {
+        val serviceIntent = Intent(this, ObeisanceForegroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(this, serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+        result.success(null)
     }
 
     private fun setPackagesSuspended(
