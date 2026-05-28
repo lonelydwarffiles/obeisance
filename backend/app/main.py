@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.submission import router as submission_router
+
 
 app = FastAPI(title="Leashio MDM API")
 
@@ -11,6 +13,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(submission_router, prefix="/api")
 
 
 @app.get("/health")
