@@ -8,10 +8,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final mqttServiceProvider = Provider<MqttService>((ref) {
   final service = MqttService();
-  ref.onDispose(service.dispose);
+  ref.onDispose(() {
+    unawaited(service.dispose());
+  });
   return service;
 });
 
@@ -68,7 +71,7 @@ class MqttService {
   }) async {
     await disconnect();
 
-    final clientId = 'obeisance_${hardwareUuid.replaceAll('-', '').substring(0, 8)}';
+    final clientId = _buildClientId(hardwareUuid);
     final client = MqttServerClient(brokerHost, clientId)
       ..port = brokerPort
       ..keepAlivePeriod = 30
@@ -225,6 +228,12 @@ class MqttService {
     await service.startService();
   }
 
+  String _buildClientId(String hardwareUuid) {
+    final sanitized = hardwareUuid.replaceAll('-', '');
+    final suffix = sanitized.length >= 8 ? sanitized.substring(0, 8) : sanitized;
+    return 'obeisance_$suffix';
+  }
+
   Future<void> disconnect() async {
     await _mqttSubscription?.cancel();
     _mqttSubscription = null;
@@ -245,6 +254,15 @@ void mqttBackgroundServiceOnStart(ServiceInstance service) async {
 
   final mqttService = MqttService();
   await mqttService.initializeForAppBoot();
+  final prefs = await SharedPreferences.getInstance();
+  final hardwareUuid = prefs.getString('hardware_uuid');
+  if (hardwareUuid != null && hardwareUuid.trim().isNotEmpty) {
+    try {
+      await mqttService.connectForDevice(hardwareUuid: hardwareUuid);
+    } catch (_) {
+      // retried by next foreground boot
+    }
+  }
 
   service.on('stopService').listen((_) {
     service.stopSelf();
