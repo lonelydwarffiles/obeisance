@@ -23,7 +23,11 @@ class UsageMonitorSnapshot {
   final Map<String, int> allowanceByPackageMs;
   final List<String> exceededPackages;
 
-  int get totalUsageMs => usageByPackageMs.values.fold(0, (sum, value) => sum + value);
+  int get totalUsageMs {
+    return allowanceByPackageMs.keys.fold(0, (sum, packageName) {
+      return sum + (usageByPackageMs[packageName] ?? 0);
+    });
+  }
 
   int get totalAllowanceMs => allowanceByPackageMs.values.fold(0, (sum, value) => sum + value);
 }
