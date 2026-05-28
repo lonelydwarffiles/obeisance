@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/auth/login_screen.dart';
 import '../features/auth/registration_gate.dart';
+import '../features/billing/payment_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/demo/demo_mode_screen.dart';
 import '../features/domme/dashboard_screen.dart';
@@ -92,6 +93,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/praise',
         builder: (context, state) => PraiseGallery(
           deviceId: state.uri.queryParameters['deviceId'] ?? '',
+        ),
+      ),
+      GoRoute(
+        path: '/billing',
+        builder: (context, state) => PaymentDashboard(
+          dommeId: state.uri.queryParameters['dommeId'] ?? '',
+          deviceId: state.uri.queryParameters['deviceId'] ?? '',
+        ),
+      ),
+      GoRoute(
+        path: '/billing-settings',
+        builder: (context, state) => DommeBillingSettings(
+          dommeId: state.uri.queryParameters['dommeId'] ?? '',
         ),
       ),
     ],

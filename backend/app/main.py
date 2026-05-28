@@ -5,6 +5,7 @@ from app.api.routes.billing import router as billing_router
 from app.api.routes.candidate import router as candidate_router
 from app.api.routes.device import router as device_router
 from app.api.routes.growth import router as growth_router
+from app.api.routes.ledger import router as ledger_router
 from app.api.routes.library import router as library_router
 from app.api.routes.notes import router as notes_router
 from app.api.routes.staging import router as staging_router
@@ -26,6 +27,7 @@ app.include_router(billing_router, prefix="/api")
 app.include_router(candidate_router, prefix="/api")
 app.include_router(device_router, prefix="/api")
 app.include_router(growth_router, prefix="/api")
+app.include_router(ledger_router, prefix="/api")
 app.include_router(library_router, prefix="/api")
 app.include_router(notes_router, prefix="/api")
 app.include_router(staging_router, prefix="/api")
