@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/chat/chat_screen.dart';
 import '../features/domme/dashboard_screen.dart';
+import '../features/economy/store_screen.dart';
 import '../features/submissive/apply_screen.dart';
 import '../features/submissive/leashed_screen.dart';
 import '../features/submissive/pending_screen.dart';
@@ -50,6 +51,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/dashboard',
         builder: (context, state) => const DashboardScreen(),
+      ),
+      GoRoute(
+        path: '/store',
+        builder: (context, state) => StoreScreen(
+          deviceId: state.uri.queryParameters['deviceId'] ?? '',
+          currencyName: state.uri.queryParameters['currencyName'] ?? 'Compliance Credits',
+        ),
       ),
     ],
   );

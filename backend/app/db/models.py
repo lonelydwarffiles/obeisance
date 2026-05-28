@@ -34,6 +34,12 @@ class TransactionStatus(str, enum.Enum):
     failed = "failed"
 
 
+class StoreItemScope(str, enum.Enum):
+    central_global = "central_global"
+    domme_global = "domme_global"
+    sub_specific = "sub_specific"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -65,6 +71,10 @@ class User(Base):
     webhook_endpoints: Mapped[list["WebhookEndpoint"]] = relationship(
         back_populates="domme", cascade="all, delete-orphan"
     )
+    created_store_items: Mapped[list["StoreItem"]] = relationship(
+        back_populates="creator",
+        foreign_keys="StoreItem.creator_id",
+    )
 
 
 class Device(Base):
@@ -87,6 +97,10 @@ class Device(Base):
         back_populates="device", cascade="all, delete-orphan"
     )
     rule_contracts: Mapped[list["RuleContract"]] = relationship(back_populates="device", cascade="all, delete-orphan")
+    targeted_store_items: Mapped[list["StoreItem"]] = relationship(
+        back_populates="target_device",
+        foreign_keys="StoreItem.target_device_id",
+    )
 
 
 class ApiKey(Base):
@@ -140,6 +154,26 @@ class RuleContract(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     device: Mapped[Device] = relationship(back_populates="rule_contracts")
+
+
+class StoreItem(Base):
+    __tablename__ = "store_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(String(1024), nullable=False)
+    cost: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope: Mapped[StoreItemScope] = mapped_column(
+        Enum(StoreItemScope, name="store_item_scope"), nullable=False, default=StoreItemScope.central_global
+    )
+    target_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    creator: Mapped[User | None] = relationship(back_populates="created_store_items", foreign_keys=[creator_id])
+    target_device: Mapped[Device | None] = relationship(back_populates="targeted_store_items", foreign_keys=[target_device_id])
 
 
 class SubmissionApplication(Base):
