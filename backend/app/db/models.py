@@ -80,6 +80,31 @@ class User(Base):
         back_populates="creator",
         foreign_keys="StoreItem.creator_id",
     )
+    tenant_profile: Mapped["Tenant | None"] = relationship(back_populates="owner", uselist=False)
+    created_invite_links: Mapped[list["InviteLink"]] = relationship(back_populates="creator")
+
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
+    base_slots: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    owner: Mapped[User] = relationship(back_populates="tenant_profile")
+
+
+class InviteLink(Base):
+    __tablename__ = "invite_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    current_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    creator: Mapped[User] = relationship(back_populates="created_invite_links")
 
 
 class Device(Base):
