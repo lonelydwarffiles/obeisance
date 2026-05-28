@@ -30,18 +30,20 @@ async def apply_for_submission(
     )
     db.add(application)
 
-    device_result = await db.execute(select(Device).where(Device.hardware_uuid == payload.hardware_uuid))
+    device_result = await db.execute(
+        select(Device).where(
+            Device.hardware_uuid == payload.hardware_uuid,
+            Device.status == DeviceStatus.unclaimed_pool,
+        )
+    )
     device = device_result.scalar_one_or_none()
     if device is None:
-        device = Device(
-            controller_id=controller.id,
-            hardware_uuid=payload.hardware_uuid,
-            status=DeviceStatus.pending,
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device not found in central pool",
         )
-        db.add(device)
-    else:
-        device.controller_id = controller.id
-        device.status = DeviceStatus.pending
+
+    device.status = DeviceStatus.lease_pending
 
     await db.commit()
     await db.refresh(application)
@@ -92,13 +94,13 @@ async def review_submission_application(
     if review.action.value == "approve":
         application.status = SubmissionStatus.approved
         if device is not None:
-            device.status = DeviceStatus.subservient
-            device.controller_id = x_mock_domme_user_id
+            device.status = DeviceStatus.leased
+            device.leased_to_id = x_mock_domme_user_id
     else:
         application.status = SubmissionStatus.rejected
         if device is not None:
-            device.status = DeviceStatus.dormant
-            device.controller_id = x_mock_domme_user_id
+            device.status = DeviceStatus.unclaimed_pool
+            device.leased_to_id = None
 
     await db.commit()
     await db.refresh(application)
