@@ -6,7 +6,17 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Device, Invoice, InvoiceStatus, LeaseTier, Transaction, TransactionStatus, Wallet
+from app.db.models import (
+    BillingDisplayMode,
+    Device,
+    DommeSettings,
+    Invoice,
+    InvoiceStatus,
+    LeaseTier,
+    Transaction,
+    TransactionStatus,
+    Wallet,
+)
 
 CENT_PRECISION = Decimal("0.01")
 
@@ -18,9 +28,10 @@ def _normalize(value: Decimal) -> Decimal:
 @dataclass(slots=True)
 class InvoiceSplit:
     invoice_id: UUID
-    amount_central: Decimal
-    amount_domme: Decimal
     amount_total: Decimal
+    display_mode: BillingDisplayMode
+    base_platform_fee: Decimal | None = None
+    domme_markup: Decimal | None = None
 
 
 class LedgerService:
@@ -46,6 +57,12 @@ class LedgerService:
         amount_domme = _normalize(Decimal(str(lease_tier.domme_markup)))
         amount_total = _normalize(amount_central + amount_domme)
 
+        settings_result = await db.execute(
+            select(DommeSettings).where(DommeSettings.domme_id == domme_id)
+        )
+        settings = settings_result.scalar_one_or_none()
+        display_mode = settings.billing_display_mode if settings is not None else BillingDisplayMode.unified
+
         invoice = Invoice(
             payer_id=None,
             receiver_id=domme_id,
@@ -59,11 +76,19 @@ class LedgerService:
         await db.commit()
         await db.refresh(invoice)
 
+        if display_mode == BillingDisplayMode.itemized:
+            return InvoiceSplit(
+                invoice_id=invoice.id,
+                amount_total=amount_total,
+                display_mode=display_mode,
+                base_platform_fee=amount_central,
+                domme_markup=amount_domme,
+            )
+
         return InvoiceSplit(
             invoice_id=invoice.id,
-            amount_central=amount_central,
-            amount_domme=amount_domme,
             amount_total=amount_total,
+            display_mode=display_mode,
         )
 
     @staticmethod

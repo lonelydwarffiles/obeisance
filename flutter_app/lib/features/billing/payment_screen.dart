@@ -20,22 +20,28 @@ const _bgColor = Color(0xFF0D0D0D);
 class _InvoiceData {
   const _InvoiceData({
     required this.invoiceId,
-    required this.amountCentral,
-    required this.amountDomme,
     required this.amountTotal,
+    this.basePlatformFee,
+    this.dommeMarkup,
   });
 
   final String invoiceId;
-  final double amountCentral;
-  final double amountDomme;
   final double amountTotal;
+  final double? basePlatformFee;
+  final double? dommeMarkup;
+
+  bool get isItemized => basePlatformFee != null && dommeMarkup != null;
 
   factory _InvoiceData.fromJson(Map<String, dynamic> json) {
     return _InvoiceData(
       invoiceId: (json['invoice_id'] as String?) ?? '',
-      amountCentral: _parseDouble(json['amount_central']),
-      amountDomme: _parseDouble(json['amount_domme']),
       amountTotal: _parseDouble(json['amount_total']),
+      basePlatformFee: json.containsKey('base_platform_fee') && json['base_platform_fee'] != null
+          ? _parseDouble(json['base_platform_fee'])
+          : null,
+      dommeMarkup: json.containsKey('domme_markup') && json['domme_markup'] != null
+          ? _parseDouble(json['domme_markup'])
+          : null,
     );
   }
 
@@ -278,12 +284,14 @@ class _InvoiceSummaryCard extends StatelessWidget {
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 12),
-          const Divider(color: Colors.white12),
-          const SizedBox(height: 8),
-          _SplitRow(label: 'Platform Fee', amount: invoice.amountCentral),
-          const SizedBox(height: 4),
-          _SplitRow(label: 'Service Fee', amount: invoice.amountDomme),
+          if (invoice.isItemized) ...[
+            const SizedBox(height: 12),
+            const Divider(color: Colors.white12),
+            const SizedBox(height: 8),
+            _SplitRow(label: 'Platform Fee', amount: invoice.basePlatformFee!),
+            const SizedBox(height: 4),
+            _SplitRow(label: 'Service Fee', amount: invoice.dommeMarkup!),
+          ],
         ],
       ),
     );
@@ -475,6 +483,7 @@ class _DommeBillingSettingsState extends State<DommeBillingSettings> {
 
   final _markupController = TextEditingController();
   bool _passCentralFeeToSub = true;
+  String _billingDisplayMode = 'unified';
 
   @override
   void initState() {
@@ -488,18 +497,25 @@ class _DommeBillingSettingsState extends State<DommeBillingSettings> {
       _error = null;
     });
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
+      final tierFuture = _dio.get<Map<String, dynamic>>(
         '/api/ledger/lease-tier/${widget.dommeId}',
       );
-      final data = response.data ?? {};
+      final settingsFuture = _dio.get<Map<String, dynamic>>(
+        '/api/ledger/settings/${widget.dommeId}',
+      );
+      final results = await Future.wait([tierFuture, settingsFuture]);
       if (!mounted) return;
+      final tierData = results[0].data ?? {};
+      final settingsData = results[1].data ?? {};
       setState(() {
         _markupController.text =
-            (data['domme_markup'] as num?)?.toStringAsFixed(2) ?? '0.00';
-        _passCentralFeeToSub = (data['pass_central_to_sub'] as bool?) ?? true;
+            (tierData['domme_markup'] as num?)?.toStringAsFixed(2) ?? '0.00';
+        _passCentralFeeToSub = (tierData['pass_central_to_sub'] as bool?) ?? true;
+        _billingDisplayMode =
+            (settingsData['billing_display_mode'] as String?) ?? 'unified';
       });
     } on DioException {
-      // No existing tier is fine; use defaults
+      // No existing tier/settings is fine; use defaults
     } catch (_) {
       // Ignore; use defaults
     } finally {
@@ -519,14 +535,23 @@ class _DommeBillingSettingsState extends State<DommeBillingSettings> {
 
     setState(() => _saving = true);
     try {
-      await _dio.post<void>(
-        '/api/ledger/lease-tier',
-        data: {
-          'domme_id': widget.dommeId,
-          'domme_markup': markup,
-          'pass_central_to_sub': _passCentralFeeToSub,
-        },
-      );
+      await Future.wait([
+        _dio.post<void>(
+          '/api/ledger/lease-tier',
+          data: {
+            'domme_id': widget.dommeId,
+            'domme_markup': markup,
+            'pass_central_to_sub': _passCentralFeeToSub,
+          },
+        ),
+        _dio.put<void>(
+          '/api/ledger/settings',
+          data: {
+            'domme_id': widget.dommeId,
+            'billing_display_mode': _billingDisplayMode,
+          },
+        ),
+      ]);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Billing settings saved.')),
@@ -613,6 +638,45 @@ class _DommeBillingSettingsState extends State<DommeBillingSettings> {
                               borderSide: BorderSide(color: _accentColor),
                             ),
                           ),
+                        ),
+                        const SizedBox(height: 24),
+                        const Divider(color: Colors.white12),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Statement Display Mode',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Choose how your sub sees the invoice breakdown.',
+                          style: TextStyle(color: Colors.white54, fontSize: 12),
+                        ),
+                        const SizedBox(height: 12),
+                        SegmentedButton<String>(
+                          style: SegmentedButton.styleFrom(
+                            selectedBackgroundColor: _accentColor,
+                            selectedForegroundColor: Colors.black,
+                            foregroundColor: Colors.white70,
+                            side: const BorderSide(color: Colors.white24),
+                          ),
+                          segments: const [
+                            ButtonSegment(
+                              value: 'unified',
+                              label: Text('Unified'),
+                              icon: Icon(Icons.receipt_long_outlined),
+                            ),
+                            ButtonSegment(
+                              value: 'itemized',
+                              label: Text('Itemized'),
+                              icon: Icon(Icons.format_list_bulleted),
+                            ),
+                          ],
+                          selected: {_billingDisplayMode},
+                          onSelectionChanged: (selection) =>
+                              setState(() => _billingDisplayMode = selection.first),
                         ),
                         const SizedBox(height: 24),
                         const Divider(color: Colors.white12),

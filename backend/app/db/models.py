@@ -50,6 +50,11 @@ class TerminologyStatus(str, enum.Enum):
     pending = "pending"
 
 
+class BillingDisplayMode(str, enum.Enum):
+    unified = "unified"
+    itemized = "itemized"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -321,6 +326,22 @@ class PersonaProfile(Base):
         ARRAY(String),
         nullable=False,
         default=lambda: ["ledger", "knot", "proof_upload", "sensory"],
+    )
+
+    domme: Mapped[User] = relationship(foreign_keys=[domme_id])
+
+
+class DommeSettings(Base):
+    __tablename__ = "domme_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    domme_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True
+    )
+    billing_display_mode: Mapped[BillingDisplayMode] = mapped_column(
+        Enum(BillingDisplayMode, name="billing_display_mode"),
+        nullable=False,
+        default=BillingDisplayMode.unified,
     )
 
     domme: Mapped[User] = relationship(foreign_keys=[domme_id])
