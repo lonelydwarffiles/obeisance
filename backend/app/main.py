@@ -11,6 +11,7 @@ from app.api.routes.notes import router as notes_router
 from app.api.routes.staging import router as staging_router
 from app.api.routes.store import router as store_router
 from app.api.routes.submission import router as submission_router
+from app.api.routes.webhooks import router as webhooks_router
 
 
 app = FastAPI(title="Leashio MDM API")
@@ -33,6 +34,7 @@ app.include_router(notes_router, prefix="/api")
 app.include_router(staging_router, prefix="/api")
 app.include_router(store_router, prefix="/api")
 app.include_router(submission_router, prefix="/api")
+app.include_router(webhooks_router, prefix="/api")
 
 
 @app.get("/health")
