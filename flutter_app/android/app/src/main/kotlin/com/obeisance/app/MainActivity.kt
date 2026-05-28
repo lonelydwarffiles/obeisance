@@ -1,5 +1,6 @@
 package com.obeisance.app
 
+import android.app.AppOpsManager
 import android.app.WallpaperManager
 import android.app.admin.DevicePolicyManager
 import android.app.usage.UsageStatsManager
@@ -9,9 +10,11 @@ import android.content.Intent
 import android.media.AudioManager
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
+import android.net.VpnService
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.view.KeyEvent
 import io.flutter.embedding.android.FlutterActivity
@@ -20,6 +23,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONObject
 import java.net.URL
+import java.util.Calendar
 import java.util.Locale
 
 class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
@@ -86,6 +90,26 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
 
             "gatherUsageStats" -> {
                 result.success(gatherUsageStats())
+            }
+
+            "getScreentimeStats" -> {
+                getScreentimeStats(result)
+            }
+
+            "startDnsFilter" -> {
+                startDnsFilter(result)
+            }
+
+            "stopDnsFilter" -> {
+                stopDnsFilter(result)
+            }
+
+            "setPackagesSuspended" -> {
+                val packages = call.argument<List<String>>("packages").orEmpty()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                val suspended = call.argument<Boolean>("suspended") ?: true
+                setPackagesSuspended(packages, suspended, result)
             }
 
             "pauseMedia" -> {
@@ -169,6 +193,121 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             aggregate[entry.packageName] = current + entry.totalTimeInForeground
         }
         return aggregate
+    }
+
+    private fun getScreentimeStats(result: MethodChannel.Result) {
+        if (!hasUsageStatsPermission()) {
+            result.error(
+                "usage_access_required",
+                "Usage access is not granted. Launch Settings.ACTION_USAGE_ACCESS_SETTINGS to grant access.",
+                Settings.ACTION_USAGE_ACCESS_SETTINGS
+            )
+            return
+        }
+
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val now = System.currentTimeMillis()
+        val midnight = Calendar.getInstance().apply {
+            timeInMillis = now
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val stats = usageStatsManager.queryUsageStats(
+            UsageStatsManager.INTERVAL_DAILY,
+            midnight,
+            now
+        )
+        val aggregate = mutableMapOf<String, Long>()
+        for (entry in stats) {
+            if (entry.packageName.isNullOrBlank() || entry.totalTimeInForeground <= 0L) {
+                continue
+            }
+            val current = aggregate[entry.packageName] ?: 0L
+            aggregate[entry.packageName] = current + entry.totalTimeInForeground
+        }
+        result.success(aggregate)
+    }
+
+    private fun hasUsageStatsPermission(): Boolean {
+        val appOpsManager = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOpsManager.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOpsManager.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        }
+
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun startDnsFilter(result: MethodChannel.Result) {
+        if (VpnService.prepare(this) != null) {
+            result.error(
+                "vpn_permission_required",
+                "VPN consent is required. Launch VpnService.prepare() intent before starting DNS filter.",
+                null
+            )
+            return
+        }
+
+        val serviceIntent = Intent(this, ObeisanceVpnService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+        result.success(null)
+    }
+
+    private fun stopDnsFilter(result: MethodChannel.Result) {
+        val stopped = stopService(Intent(this, ObeisanceVpnService::class.java))
+        result.success(stopped)
+    }
+
+    private fun setPackagesSuspended(
+        packages: List<String>,
+        suspended: Boolean,
+        result: MethodChannel.Result
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            result.error("unsupported", "Package suspension requires Android 9 (API 28)+", null)
+            return
+        }
+        if (packages.isEmpty()) {
+            result.success(emptyList<String>())
+            return
+        }
+
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = dpm.activeAdmins?.firstOrNull { it.packageName == packageName }
+        if (admin == null) {
+            result.error(
+                "admin_required",
+                "No active device admin receiver found for package suspension.",
+                null
+            )
+            return
+        }
+
+        try {
+            val unaffected = dpm.setPackagesSuspended(admin, packages.toTypedArray(), suspended)
+            result.success(unaffected?.toList() ?: emptyList<String>())
+        } catch (error: SecurityException) {
+            result.error("suspend_failed", "Device owner/admin privileges are required.", error.message)
+        } catch (error: IllegalArgumentException) {
+            result.error("suspend_failed", "Failed to suspend one or more packages.", error.message)
+        }
     }
 
     private fun dispatchMediaKey(keyCode: Int) {

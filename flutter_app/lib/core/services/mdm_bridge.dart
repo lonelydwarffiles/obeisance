@@ -47,6 +47,29 @@ class MdmBridge {
     return response.map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0));
   }
 
+  Future<Map<String, int>> getDailyScreentime() async {
+    final response = await platform.invokeMapMethod<String, dynamic>('getScreentimeStats');
+    if (response == null) {
+      return const {};
+    }
+    return response.map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0));
+  }
+
+  Future<void> startDnsFilter() async {
+    await platform.invokeMethod<void>('startDnsFilter');
+  }
+
+  Future<void> stopDnsFilter() async {
+    await platform.invokeMethod<void>('stopDnsFilter');
+  }
+
+  Future<void> setPackagesSuspended(List<String> packageNames, {bool suspended = true}) async {
+    await platform.invokeMethod<void>('setPackagesSuspended', {
+      'packages': packageNames,
+      'suspended': suspended,
+    });
+  }
+
   Future<void> pauseMedia() async {
     await platform.invokeMethod<void>('pauseMedia');
   }
