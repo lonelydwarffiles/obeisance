@@ -25,6 +25,8 @@ dependencies:
   network_info_plus: ^6.1.1
   flutter_blue_plus: ^1.34.5
   web_socket_channel: ^3.0.1
+  flutter_secure_storage: ^9.2.2
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:

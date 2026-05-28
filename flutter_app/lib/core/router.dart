@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/domme/dashboard_screen.dart';
 import '../features/economy/store_screen.dart';
+import '../features/notes/knot_screen.dart';
+import '../features/praise/praise_gallery.dart';
+import '../features/ritual/vow_screen.dart';
 import '../features/submissive/apply_screen.dart';
 import '../features/submissive/leashed_screen.dart';
 import '../features/submissive/pending_screen.dart';
@@ -57,6 +60,28 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => StoreScreen(
           deviceId: state.uri.queryParameters['deviceId'] ?? '',
           currencyName: state.uri.queryParameters['currencyName'] ?? 'Compliance Credits',
+        ),
+      ),
+      GoRoute(
+        path: '/knot',
+        builder: (context, state) => KnotScreen(
+          deviceId: state.uri.queryParameters['deviceId'] ?? '',
+          isDomme: state.uri.queryParameters['role'] == 'domme',
+          dommeUserId: state.uri.queryParameters['dommeUserId'],
+        ),
+      ),
+      GoRoute(
+        path: '/vow',
+        builder: (context, state) => VowScreen(
+          deviceId: state.uri.queryParameters['deviceId'] ?? '',
+          controllerGreeting:
+              state.uri.queryParameters['greeting'] ?? 'Good day.',
+        ),
+      ),
+      GoRoute(
+        path: '/praise',
+        builder: (context, state) => PraiseGallery(
+          deviceId: state.uri.queryParameters['deviceId'] ?? '',
         ),
       ),
     ],

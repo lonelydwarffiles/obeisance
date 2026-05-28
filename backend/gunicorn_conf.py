@@ -1,0 +1,9 @@
+bind = "0.0.0.0:8000"
+worker_class = "uvicorn.workers.UvicornWorker"
+workers = 4
+threads = 2
+timeout = 60
+keepalive = 5
+graceful_timeout = 30
+accesslog = "-"
+errorlog = "-"

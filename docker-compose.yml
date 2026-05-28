@@ -1,30 +1,67 @@
 services:
   db:
-    image: postgres:15
+    image: postgres:16-alpine
+    container_name: obeisance-db
     environment:
-      POSTGRES_DB: leashio
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: obeisance
+      POSTGRES_USER: obeisance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d leashio"]
+      test: ["CMD-SHELL", "pg_isready -U obeisance -d obeisance"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    container_name: obeisance-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
 
   backend:
     build:
       context: ./backend
+    container_name: obeisance-api
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres@db:5432/leashio
-    ports:
-      - "8000:8000"
+      DATABASE_URL: postgresql+asyncpg://obeisance:${POSTGRES_PASSWORD:-changeme}@db:5432/obeisance
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: obeisance-nginx
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/letsencrypt:/etc/letsencrypt:ro
+      - ./deploy/certbot-www:/var/www/certbot:ro
+    networks: [internal]
 
 volumes:
   postgres_data:
+  redis_data:
+
+networks:
+  internal:
+    driver: bridge

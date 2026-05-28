@@ -2,8 +2,8 @@ import enum
 import uuid
 from datetime import datetime, time
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Time, func
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Time, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSON, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -38,6 +38,11 @@ class StoreItemScope(str, enum.Enum):
     central_global = "central_global"
     domme_global = "domme_global"
     sub_specific = "sub_specific"
+
+
+class TerminologyStatus(str, enum.Enum):
+    approved = "approved"
+    pending = "pending"
 
 
 class User(Base):
@@ -233,3 +238,107 @@ class Transaction(Base):
 
     device: Mapped[Device] = relationship(back_populates="transactions")
     paid_by: Mapped[User | None] = relationship(back_populates="payments_made", foreign_keys=[paid_by_id])
+
+
+class SharedNote(Base):
+    __tablename__ = "shared_notes"
+    __table_args__ = (UniqueConstraint("device_id", name="uq_shared_notes_device"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    device: Mapped[Device] = relationship()
+
+
+class DommeDossier(Base):
+    __tablename__ = "domme_dossiers"
+    __table_args__ = (UniqueConstraint("domme_id", "device_id", name="uq_domme_dossier_pair"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    domme_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    private_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")  # encrypted at rest in service layer
+    last_updated: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    domme: Mapped[User] = relationship(foreign_keys=[domme_id])
+    device: Mapped[Device] = relationship(foreign_keys=[device_id])
+
+
+class PersonaProfile(Base):
+    __tablename__ = "persona_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    domme_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True
+    )
+    terminology_map: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: {
+            "sub_label": "Pet",
+            "domme_label": "Mistress",
+            "task_label": "Chore",
+            "currency_label": "Credits",
+        },
+    )
+    enabled_modules: Mapped[list[str]] = mapped_column(
+        ARRAY(String),
+        nullable=False,
+        default=lambda: ["ledger", "knot", "proof_upload", "sensory"],
+    )
+
+    domme: Mapped[User] = relationship(foreign_keys=[domme_id])
+
+
+class TerminologyLibrary(Base):
+    __tablename__ = "terminology_library"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. "sub_label"
+    term: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[TerminologyStatus] = mapped_column(
+        Enum(TerminologyStatus, name="terminology_status"),
+        nullable=False,
+        default=TerminologyStatus.pending,
+    )
+    creator_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True  # null => created by Central
+    )
+
+    creator: Mapped[User | None] = relationship(foreign_keys=[creator_id])
+
+
+class CandidateProfile(Base):
+    __tablename__ = "candidate_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id"), unique=True, nullable=False
+    )
+    anonymized_interests: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    readiness_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    device: Mapped[Device] = relationship(foreign_keys=[device_id])
+
+
+class DailyPrepTask(Base):
+    __tablename__ = "daily_prep_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

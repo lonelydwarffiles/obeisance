@@ -192,6 +192,10 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 result.success(getNowPlaying())
             }
 
+            "isRooted" -> {
+                result.success(isDeviceRooted())
+            }
+
             else -> result.notImplemented()
         }
     }
@@ -566,6 +570,40 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             "track" to metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE),
             "artist" to metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
         )
+    }
+
+    private fun isDeviceRooted(): Boolean = hasTestKeys() || hasSuBinary() || hasDangerousRootApps()
+
+    private fun hasTestKeys(): Boolean {
+        val tags = Build.TAGS
+        return tags != null && tags.contains("test-keys")
+    }
+
+    private fun hasSuBinary(): Boolean {
+        val paths = arrayOf(
+            "/system/app/Superuser.apk",
+            "/sbin/su",
+            "/system/bin/su",
+            "/system/xbin/su",
+            "/data/local/xbin/su",
+            "/data/local/bin/su",
+            "/system/sd/xbin/su",
+            "/system/bin/failsafe/su",
+            "/data/local/su"
+        )
+        return paths.any { java.io.File(it).exists() }
+    }
+
+    private fun hasDangerousRootApps(): Boolean {
+        val suspicious = arrayOf("com.topjohnwu.magisk", "eu.chainfire.supersu")
+        return suspicious.any {
+            try {
+                packageManager.getPackageInfo(it, 0)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
     override fun onInit(status: Int) {
