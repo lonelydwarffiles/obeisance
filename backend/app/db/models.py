@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Time, func
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -34,6 +34,12 @@ class TransactionStatus(str, enum.Enum):
     failed = "failed"
 
 
+class StoreItemScope(str, enum.Enum):
+    central_global = "central_global"
+    domme_global = "domme_global"
+    sub_specific = "sub_specific"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -61,6 +67,14 @@ class User(Base):
     submission_applications: Mapped[list["SubmissionApplication"]] = relationship(
         back_populates="controller", cascade="all, delete-orphan"
     )
+    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="domme", cascade="all, delete-orphan")
+    webhook_endpoints: Mapped[list["WebhookEndpoint"]] = relationship(
+        back_populates="domme", cascade="all, delete-orphan"
+    )
+    created_store_items: Mapped[list["StoreItem"]] = relationship(
+        back_populates="creator",
+        foreign_keys="StoreItem.creator_id",
+    )
 
 
 class Device(Base):
@@ -79,6 +93,87 @@ class Device(Base):
     central_owner: Mapped[User] = relationship(back_populates="centrally_owned_devices", foreign_keys=[central_owner_id])
     leased_to: Mapped[User | None] = relationship(back_populates="leased_devices", foreign_keys=[leased_to_id])
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="device", cascade="all, delete-orphan")
+    grace_ledger_entries: Mapped[list["GraceLedger"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan"
+    )
+    rule_contracts: Mapped[list["RuleContract"]] = relationship(back_populates="device", cascade="all, delete-orphan")
+    targeted_store_items: Mapped[list["StoreItem"]] = relationship(
+        back_populates="target_device",
+        foreign_keys="StoreItem.target_device_id",
+    )
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    domme_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    domme: Mapped[User] = relationship(back_populates="api_keys")
+
+
+class WebhookEndpoint(Base):
+    __tablename__ = "webhook_endpoints"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    domme_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    target_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    secret_token: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_types: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+
+    domme: Mapped[User] = relationship(back_populates="webhook_endpoints")
+
+
+class GraceLedger(Base):
+    __tablename__ = "grace_ledger"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    device: Mapped[Device] = relationship(back_populates="grace_ledger_entries")
+
+
+class RuleContract(Base):
+    __tablename__ = "rule_contracts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    require_photo_proof: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deadline_time: Mapped[time] = mapped_column(Time(timezone=False), nullable=False)
+    days_of_week: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False, default=list)
+    reward_grace: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    punishment_grace: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    auto_lock_on_fail: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    device: Mapped[Device] = relationship(back_populates="rule_contracts")
+
+
+class StoreItem(Base):
+    __tablename__ = "store_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(String(1024), nullable=False)
+    cost: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope: Mapped[StoreItemScope] = mapped_column(
+        Enum(StoreItemScope, name="store_item_scope"), nullable=False, default=StoreItemScope.central_global
+    )
+    target_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    creator: Mapped[User | None] = relationship(back_populates="created_store_items", foreign_keys=[creator_id])
+    target_device: Mapped[Device | None] = relationship(back_populates="targeted_store_items", foreign_keys=[target_device_id])
 
 
 class SubmissionApplication(Base):
