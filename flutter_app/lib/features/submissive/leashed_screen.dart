@@ -96,74 +96,74 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
         });
       }
     }
+  }
 
-    Future<void> _refreshTempoSharing(String hardwareUuid) async {
-      try {
-        final service = ref.read(tempoSharingServiceProvider);
-        final settings = await service.fetchSettings(hardwareUuid: hardwareUuid);
-        final history = await service.fetchHistory(hardwareUuid: hardwareUuid);
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _tempoSettings = settings;
-          _tempoHistory = history;
-          _tempoError = null;
-        });
-      } catch (_) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _tempoError = 'Tempo sharing unavailable right now.';
-        });
-      }
-    }
-
-    Future<void> _saveTempoSettings({
-      required bool enabled,
-      required bool paused,
-      required TempoCadence cadence,
-      required bool consentAcknowledged,
-    }) async {
-      final hardwareUuid = _hardwareUuid;
-      if (hardwareUuid == null || hardwareUuid.isEmpty) {
+  Future<void> _refreshTempoSharing(String hardwareUuid) async {
+    try {
+      final service = ref.read(tempoSharingServiceProvider);
+      final settings = await service.fetchSettings(hardwareUuid: hardwareUuid);
+      final history = await service.fetchHistory(hardwareUuid: hardwareUuid);
+      if (!mounted) {
         return;
       }
       setState(() {
-        _tempoBusy = true;
+        _tempoSettings = settings;
+        _tempoHistory = history;
+        _tempoError = null;
       });
-      try {
-        final service = ref.read(tempoSharingServiceProvider);
-        final settings = await service.updateSettings(
-          hardwareUuid: hardwareUuid,
-          enabled: enabled,
-          paused: paused,
-          cadence: cadence,
-          consentAcknowledged: consentAcknowledged,
-        );
-        final history = await service.fetchHistory(hardwareUuid: hardwareUuid);
-        if (!mounted) {
-          return;
-        }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoError = 'Tempo sharing unavailable right now.';
+      });
+    }
+  }
+
+  Future<void> _saveTempoSettings({
+    required bool enabled,
+    required bool paused,
+    required TempoCadence cadence,
+    required bool consentAcknowledged,
+  }) async {
+    final hardwareUuid = _hardwareUuid;
+    if (hardwareUuid == null || hardwareUuid.isEmpty) {
+      return;
+    }
+    setState(() {
+      _tempoBusy = true;
+    });
+    try {
+      final service = ref.read(tempoSharingServiceProvider);
+      final settings = await service.updateSettings(
+        hardwareUuid: hardwareUuid,
+        enabled: enabled,
+        paused: paused,
+        cadence: cadence,
+        consentAcknowledged: consentAcknowledged,
+      );
+      final history = await service.fetchHistory(hardwareUuid: hardwareUuid);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoSettings = settings;
+        _tempoHistory = history;
+        _tempoError = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoError = 'Could not update tempo sharing.';
+      });
+    } finally {
+      if (mounted) {
         setState(() {
-          _tempoSettings = settings;
-          _tempoHistory = history;
-          _tempoError = null;
+          _tempoBusy = false;
         });
-      } catch (_) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _tempoError = 'Could not update tempo sharing.';
-        });
-      } finally {
-        if (mounted) {
-          setState(() {
-            _tempoBusy = false;
-          });
-        }
       }
     }
   }

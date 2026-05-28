@@ -65,31 +65,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       if (!mounted) {
         return;
       }
-
-      Future<void> _fetchTempoSummaries() async {
-        if (widget.dommeId == 'unknown') {
-          return;
-        }
-        try {
-          final entries = await ref.read(tempoSharingServiceProvider).fetchDomSummaries(
-                dommeId: widget.dommeId,
-                cadence: _selectedCadence,
-              );
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _tempoSummaries = entries;
-          });
-        } catch (_) {
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _tempoSummaries = const [];
-          });
-        }
-      }
       setState(() {
         _error = 'Unable to load leases.';
       });
@@ -99,6 +74,31 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           _loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _fetchTempoSummaries() async {
+    if (widget.dommeId == 'unknown') {
+      return;
+    }
+    try {
+      final entries = await ref.read(tempoSharingServiceProvider).fetchDomSummaries(
+            dommeId: widget.dommeId,
+            cadence: _selectedCadence,
+          );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoSummaries = entries;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoSummaries = const [];
+      });
     }
   }
 
