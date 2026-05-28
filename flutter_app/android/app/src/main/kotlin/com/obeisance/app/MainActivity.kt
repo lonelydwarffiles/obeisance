@@ -1,6 +1,7 @@
 package com.obeisance.app
 
 import android.app.AppOpsManager
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.WallpaperManager
 import android.app.admin.DevicePolicyManager
@@ -10,7 +11,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.RingtoneManager
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.net.VpnService
@@ -51,6 +54,7 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        registerNotificationChannels()
         textToSpeech = TextToSpeech(this, this)
     }
 
@@ -227,6 +231,49 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
+    }
+
+    private fun registerNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        val channels = listOf(
+            NotificationChannel(
+                CHANNEL_ANCHOR,
+                "Anchor",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Persistent service anchor notifications."
+                setSound(null, null)
+            },
+            NotificationChannel(
+                CHANNEL_DIRECTIVE,
+                "Directive",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Task and chat directives."
+            },
+            NotificationChannel(
+                CHANNEL_SYSTEM_ALERT,
+                "System Alert",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Emergency page commands."
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
+                    audioAttributes
+                )
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                setBypassDnd(true)
+            }
+        )
+        notificationManager.createNotificationChannels(channels)
     }
 
     private fun updateRedirectRules(rules: Map<String, String>) {
@@ -539,6 +586,9 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         private const val REDIRECT_RULES_KEY = "redirect_rules"
         private const val USAGE_WINDOW_MS = 24 * 60 * 60 * 1000L
         private const val ACTION_ADMIN_DISABLED_SOS = "com.obeisance.app.ACTION_ADMIN_DISABLED_SOS"
+        private const val CHANNEL_ANCHOR = "ANCHOR"
+        private const val CHANNEL_DIRECTIVE = "DIRECTIVE"
+        private const val CHANNEL_SYSTEM_ALERT = "SYSTEM_ALERT"
     }
 }
 
