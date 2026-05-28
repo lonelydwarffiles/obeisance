@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/services/mqtt_service.dart';
 import '../../core/services/telemetry_service.dart';
+import '../../core/services/tempo_sharing_service.dart';
 
 class LeashedScreen extends ConsumerStatefulWidget {
   const LeashedScreen({
@@ -38,7 +39,12 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
   bool _connected = false;
   bool _loading = true;
   String? _error;
+  String? _hardwareUuid;
   List<HubTask> _tasks = const [];
+  TempoShareSettings? _tempoSettings;
+  List<TempoShareHistoryEntry> _tempoHistory = const [];
+  bool _tempoBusy = false;
+  String? _tempoError;
 
   @override
   void initState() {
@@ -54,6 +60,7 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
 
     try {
       final telemetry = await ref.read(telemetryServiceProvider).getDeviceStats();
+      final hardwareUuid = telemetry['hardware_uuid'] as String?;
       final response = await _dio.get<List<dynamic>>(
         '/api/tasks/daily',
         queryParameters: {'domme_id': widget.dommeId},
@@ -68,9 +75,13 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
       }
       setState(() {
         _battery = (telemetry['battery_percentage'] as int?) ?? 0;
+        _hardwareUuid = hardwareUuid;
         _connected = ref.read(mqttServiceProvider).isConnected;
         _tasks = parsedTasks;
       });
+      if (hardwareUuid != null && hardwareUuid.isNotEmpty) {
+        await _refreshTempoSharing(hardwareUuid);
+      }
     } catch (_) {
       if (!mounted) {
         return;
@@ -82,6 +93,76 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshTempoSharing(String hardwareUuid) async {
+    try {
+      final service = ref.read(tempoSharingServiceProvider);
+      final settings = await service.fetchSettings(hardwareUuid: hardwareUuid);
+      final history = await service.fetchHistory(hardwareUuid: hardwareUuid);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoSettings = settings;
+        _tempoHistory = history;
+        _tempoError = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoError = 'Tempo sharing unavailable right now.';
+      });
+    }
+  }
+
+  Future<void> _saveTempoSettings({
+    required bool enabled,
+    required bool paused,
+    required TempoCadence cadence,
+    required bool consentAcknowledged,
+  }) async {
+    final hardwareUuid = _hardwareUuid;
+    if (hardwareUuid == null || hardwareUuid.isEmpty) {
+      return;
+    }
+    setState(() {
+      _tempoBusy = true;
+    });
+    try {
+      final service = ref.read(tempoSharingServiceProvider);
+      final settings = await service.updateSettings(
+        hardwareUuid: hardwareUuid,
+        enabled: enabled,
+        paused: paused,
+        cadence: cadence,
+        consentAcknowledged: consentAcknowledged,
+      );
+      final history = await service.fetchHistory(hardwareUuid: hardwareUuid);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoSettings = settings;
+        _tempoHistory = history;
+        _tempoError = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoError = 'Could not update tempo sharing.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _tempoBusy = false;
         });
       }
     }
@@ -187,10 +268,148 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
                     ),
                   Expanded(
                     child: ListView.builder(
-                      itemCount: _tasks.length,
+                      itemCount: _tasks.length + 1,
                       padding: const EdgeInsets.all(16),
                       itemBuilder: (context, index) {
-                        final task = _tasks[index];
+                        if (index == 0) {
+                          final settings = _tempoSettings;
+                          return Card(
+                            color: const Color(0xFF171717),
+                            margin: const EdgeInsets.only(bottom: 12),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Tempo Sharing',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    'Optional. When enabled, only your linked Controller receives period summaries.',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  SwitchListTile(
+                                    value: settings?.sharingEnabled ?? false,
+                                    onChanged: (_tempoBusy || settings == null)
+                                        ? null
+                                        : (value) => _saveTempoSettings(
+                                              enabled: value,
+                                              paused: false,
+                                              cadence: settings.cadence,
+                                              consentAcknowledged: value,
+                                            ),
+                                    title: const Text(
+                                      'Enable consent-based sharing',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                    subtitle: const Text(
+                                      'You can revoke this at any time.',
+                                      style: TextStyle(color: Colors.white60),
+                                    ),
+                                    activeColor: const Color(0xFFE0B84C),
+                                  ),
+                                  Row(
+                                    children: [
+                                      const Text(
+                                        'Cadence:',
+                                        style: TextStyle(color: Colors.white70),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      DropdownButton<TempoCadence>(
+                                        dropdownColor: const Color(0xFF222222),
+                                        value: settings?.cadence ?? TempoCadence.weekly,
+                                        items: TempoCadence.values
+                                            .map(
+                                              (cadence) => DropdownMenuItem(
+                                                value: cadence,
+                                                child: Text(
+                                                  cadence.label,
+                                                  style: const TextStyle(color: Colors.white),
+                                                ),
+                                              ),
+                                            )
+                                            .toList(),
+                                        onChanged: (_tempoBusy || settings == null || !settings.sharingEnabled)
+                                            ? null
+                                            : (value) {
+                                                if (value == null) {
+                                                  return;
+                                                }
+                                                _saveTempoSettings(
+                                                  enabled: settings.sharingEnabled,
+                                                  paused: settings.sharingPaused,
+                                                  cadence: value,
+                                                  consentAcknowledged: true,
+                                                );
+                                              },
+                                      ),
+                                      const Spacer(),
+                                      TextButton(
+                                        onPressed: (_tempoBusy || settings == null || !settings.sharingEnabled)
+                                            ? null
+                                            : () => _saveTempoSettings(
+                                                  enabled: settings.sharingEnabled,
+                                                  paused: !settings.sharingPaused,
+                                                  cadence: settings.cadence,
+                                                  consentAcknowledged: true,
+                                                ),
+                                        child: Text(
+                                          settings?.sharingPaused == true ? 'Resume' : 'Pause',
+                                          style: const TextStyle(color: Color(0xFFE0B84C)),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_tempoError != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: Text(
+                                        _tempoError!,
+                                        style: const TextStyle(color: Colors.redAccent),
+                                      ),
+                                    ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    'Sharing History',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  if (_tempoHistory.isEmpty)
+                                    const Text(
+                                      'No summaries sent yet.',
+                                      style: TextStyle(color: Colors.white60),
+                                    ),
+                                  for (final entry in _tempoHistory.take(4))
+                                    ListTile(
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text(
+                                        '${entry.cadence.label} • ${entry.deliveryStatus}',
+                                        style: const TextStyle(color: Colors.white),
+                                      ),
+                                      subtitle: Text(
+                                        'Avg ${entry.averageVelocity.toStringAsFixed(1)} px/s • Samples ${entry.sampleCount}',
+                                        style: const TextStyle(color: Colors.white60),
+                                      ),
+                                      trailing: Text(
+                                        _formatTimestamp(entry.deliveredAt),
+                                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+                        final task = _tasks[index - 1];
                         return Card(
                           color: const Color(0xFF171717),
                           margin: const EdgeInsets.only(bottom: 10),
@@ -233,6 +452,18 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
         ],
       ),
     );
+  }
+
+  String _formatTimestamp(DateTime? value) {
+    if (value == null) {
+      return '--';
+    }
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$month/$day $hour:$minute';
   }
 }
 

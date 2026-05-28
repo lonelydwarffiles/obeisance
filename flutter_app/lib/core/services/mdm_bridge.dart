@@ -78,6 +78,20 @@ class MdmBridge {
     });
   }
 
+  Future<void> suspendPackage(String packageName) async {
+    await setPackagesSuspended([packageName], suspended: true);
+  }
+
+  Future<void> updateTempoSettings({
+    required String sensitivity,
+    required List<String> restrictedPackages,
+  }) async {
+    await platform.invokeMethod<void>('updateTempoSettings', {
+      'sensitivity': sensitivity,
+      'restrictedPackages': restrictedPackages,
+    });
+  }
+
   Future<void> setKioskMode(bool enable) async {
     await platform.invokeMethod<void>('setKioskMode', {
       'enable': enable,

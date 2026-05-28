@@ -4,10 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers/demo_mode_provider.dart';
+import '../../core/services/tempo_sharing_service.dart';
+import '../dashboard/usage_screen.dart';
 import '../growth/invite_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({
+    super.key,
+    this.dommeId = 'unknown',
+  });
+
+  final String dommeId;
 
   @override
   ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
@@ -27,6 +34,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _loading = true;
   String? _error;
   List<LeaseSummary> _leases = const [];
+  List<TempoShareHistoryEntry> _tempoSummaries = const [];
+  TempoCadence _selectedCadence = TempoCadence.daily;
 
   @override
   void initState() {
@@ -51,6 +60,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       setState(() {
         _leases = entries;
       });
+      await _fetchTempoSummaries();
     } catch (_) {
       if (!mounted) {
         return;
@@ -64,6 +74,31 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           _loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _fetchTempoSummaries() async {
+    if (widget.dommeId == 'unknown') {
+      return;
+    }
+    try {
+      final entries = await ref.read(tempoSharingServiceProvider).fetchDomSummaries(
+            dommeId: widget.dommeId,
+            cadence: _selectedCadence,
+          );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoSummaries = entries;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tempoSummaries = const [];
+      });
     }
   }
 
@@ -154,7 +189,71 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         subtitle: Text('Read-only sample data is active'),
                       ),
                     ),
+                  const UsageDashboardTile(),
                   const InviteDashboard(),
+                  const SizedBox(height: 10),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Tempo Summaries',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Text('Period:'),
+                              const SizedBox(width: 10),
+                              DropdownButton<TempoCadence>(
+                                value: _selectedCadence,
+                                items: TempoCadence.values
+                                    .map(
+                                      (entry) => DropdownMenuItem(
+                                        value: entry,
+                                        child: Text(entry.label),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  setState(() {
+                                    _selectedCadence = value;
+                                  });
+                                  _fetchTempoSummaries();
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          if (_tempoSummaries.isEmpty)
+                            const Text(
+                              'No summaries available.',
+                              style: TextStyle(color: Colors.black54),
+                            ),
+                          for (final summary in _tempoSummaries.take(6))
+                            ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                '${summary.cadence.label} • ${summary.deliveryStatus}',
+                              ),
+                              subtitle: Text(
+                                'Avg ${summary.averageVelocity.toStringAsFixed(1)} px/s • Samples ${summary.sampleCount}',
+                              ),
+                              trailing: Text(
+                                _formatTimestamp(summary.deliveredAt),
+                                style: const TextStyle(fontSize: 12, color: Colors.black54),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 10),
                   const GenerateInviteButton(),
                   const SizedBox(height: 14),
@@ -189,6 +288,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
             ),
     );
+  }
+
+  String _formatTimestamp(DateTime? value) {
+    if (value == null) {
+      return '--';
+    }
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$month/$day $hour:$minute';
   }
 }
 
