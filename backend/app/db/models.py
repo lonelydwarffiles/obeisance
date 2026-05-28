@@ -34,6 +34,11 @@ class TransactionStatus(str, enum.Enum):
     failed = "failed"
 
 
+class InvoiceStatus(str, enum.Enum):
+    pending = "pending"
+    paid = "paid"
+
+
 class StoreItemScope(str, enum.Enum):
     central_global = "central_global"
     domme_global = "domme_global"
@@ -43,6 +48,11 @@ class StoreItemScope(str, enum.Enum):
 class TerminologyStatus(str, enum.Enum):
     approved = "approved"
     pending = "pending"
+
+
+class BillingDisplayMode(str, enum.Enum):
+    unified = "unified"
+    itemized = "itemized"
 
 
 class User(Base):
@@ -321,6 +331,22 @@ class PersonaProfile(Base):
     domme: Mapped[User] = relationship(foreign_keys=[domme_id])
 
 
+class DommeSettings(Base):
+    __tablename__ = "domme_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    domme_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True
+    )
+    billing_display_mode: Mapped[BillingDisplayMode] = mapped_column(
+        Enum(BillingDisplayMode, name="billing_display_mode"),
+        nullable=False,
+        default=BillingDisplayMode.unified,
+    )
+
+    domme: Mapped[User] = relationship(foreign_keys=[domme_id])
+
+
 class TerminologyLibrary(Base):
     __tablename__ = "terminology_library"
 
@@ -367,3 +393,38 @@ class DailyPrepTask(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    payer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    receiver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    amount_total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    amount_central: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    amount_domme: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    status: Mapped[InvoiceStatus] = mapped_column(
+        Enum(InvoiceStatus, name="invoice_status"), default=InvoiceStatus.pending, nullable=False
+    )
+    external_tx_hash: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    payer: Mapped[User | None] = relationship(foreign_keys=[payer_id])
+    receiver: Mapped[User] = relationship(foreign_keys=[receiver_id])
+    device: Mapped[Device] = relationship(foreign_keys=[device_id])
+
+
+class Tribute(Base):
+    __tablename__ = "tributes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    recipient_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    message: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    sender: Mapped[User] = relationship(foreign_keys=[sender_id])
+    recipient: Mapped[User] = relationship(foreign_keys=[recipient_id])
