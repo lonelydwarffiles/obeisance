@@ -60,7 +60,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/dashboard',
-        builder: (context, state) => const DashboardScreen(),
+        builder: (context, state) => DashboardScreen(
+          dommeId: state.uri.queryParameters['dommeId'] ?? 'unknown',
+        ),
       ),
       GoRoute(
         path: '/growth',

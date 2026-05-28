@@ -55,6 +55,12 @@ class BillingDisplayMode(str, enum.Enum):
     itemized = "itemized"
 
 
+class TempoShareCadence(str, enum.Enum):
+    daily = "daily"
+    weekly = "weekly"
+    monthly = "monthly"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -140,6 +146,15 @@ class Device(Base):
     targeted_store_items: Mapped[list["StoreItem"]] = relationship(
         back_populates="target_device",
         foreign_keys="StoreItem.target_device_id",
+    )
+    tempo_events: Mapped[list["TempoMetricEvent"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan"
+    )
+    tempo_sharing_preference: Mapped["TempoSharingPreference | None"] = relationship(
+        back_populates="device", uselist=False, cascade="all, delete-orphan"
+    )
+    tempo_share_summaries: Mapped[list["TempoShareSummary"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan"
     )
 
 
@@ -428,3 +443,59 @@ class Tribute(Base):
 
     sender: Mapped[User] = relationship(foreign_keys=[sender_id])
     recipient: Mapped[User] = relationship(foreign_keys=[recipient_id])
+
+
+class TempoMetricEvent(Base):
+    __tablename__ = "tempo_metric_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    velocity: Mapped[float] = mapped_column(Float, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    device: Mapped[Device] = relationship(back_populates="tempo_events")
+
+
+class TempoSharingPreference(Base):
+    __tablename__ = "tempo_sharing_preferences"
+    __table_args__ = (UniqueConstraint("device_id", name="uq_tempo_sharing_preferences_device"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    sharing_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sharing_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cadence: Mapped[TempoShareCadence] = mapped_column(
+        Enum(TempoShareCadence, name="tempo_share_cadence"),
+        nullable=False,
+        default=TempoShareCadence.weekly,
+    )
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    device: Mapped[Device] = relationship(back_populates="tempo_sharing_preference")
+
+
+class TempoShareSummary(Base):
+    __tablename__ = "tempo_share_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    domme_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    cadence: Mapped[TempoShareCadence] = mapped_column(
+        Enum(TempoShareCadence, name="tempo_share_summary_cadence"),
+        nullable=False,
+    )
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    average_velocity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    peak_velocity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    delivery_status: Mapped[str] = mapped_column(String(20), nullable=False, default="delivered")
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    device: Mapped[Device] = relationship(back_populates="tempo_share_summaries")
+    domme: Mapped[User] = relationship(foreign_keys=[domme_id])
