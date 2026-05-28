@@ -55,6 +55,7 @@ class MqttService {
   bool _notificationsReady = false;
 
   Stream<ChatMessage> get messageStream => _updatesController.stream;
+  bool get isConnected => _client?.connectionStatus?.state == MqttConnectionState.connected;
 
   Future<void> initializeForAppBoot() async {
     await _requestPermissions();
