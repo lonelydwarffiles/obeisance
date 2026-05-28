@@ -25,9 +25,16 @@
         </activity>
 
         <service
-            android:name=".ObeisanceAccessibilityService"
+            android:name=".ScrollService"
             android:exported="false"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/scroll_service_config" />
+        </service>
 
 
         <service

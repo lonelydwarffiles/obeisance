@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.WallpaperManager
 import android.app.admin.DevicePolicyManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -159,6 +160,19 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 setPackagesSuspended(packages, suspended, result)
             }
 
+            "updateTempoSettings" -> {
+                val sensitivity = call.argument<String>("sensitivity")
+                if (sensitivity.isNullOrBlank()) {
+                    result.error("invalid_args", "sensitivity is required", null)
+                    return
+                }
+                val restrictedPackages = call.argument<List<String>>("restrictedPackages").orEmpty()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                updateTempoSettings(sensitivity, restrictedPackages)
+                result.success(null)
+            }
+
             "setKioskMode" -> {
                 val enable = call.argument<Boolean>("enable") ?: false
                 setKioskMode(enable, result)
@@ -291,21 +305,9 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun gatherUsageStats(): Map<String, Long> {
-        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val endTime = System.currentTimeMillis()
         val startTime = endTime - USAGE_WINDOW_MS
-        val stats = usageStatsManager.queryUsageStats(
-            UsageStatsManager.INTERVAL_DAILY,
-            startTime,
-            endTime
-        )
-
-        val aggregate = mutableMapOf<String, Long>()
-        for (entry in stats) {
-            val current = aggregate[entry.packageName] ?: 0L
-            aggregate[entry.packageName] = current + entry.totalTimeInForeground
-        }
-        return aggregate
+        return queryForegroundUsage(startTime, endTime)
     }
 
     private fun getScreentimeStats(result: MethodChannel.Result) {
@@ -318,7 +320,6 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val now = System.currentTimeMillis()
         val midnight = Calendar.getInstance().apply {
             timeInMillis = now
@@ -328,20 +329,43 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
 
-        val stats = usageStatsManager.queryUsageStats(
-            UsageStatsManager.INTERVAL_DAILY,
-            midnight,
-            now
-        )
+        result.success(queryForegroundUsage(midnight, now))
+    }
+
+    private fun queryForegroundUsage(startTime: Long, endTime: Long): Map<String, Long> {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
         val aggregate = mutableMapOf<String, Long>()
-        for (entry in stats) {
-            if (entry.packageName.isNullOrBlank() || entry.totalTimeInForeground <= 0L) {
+        val event = UsageEvents.Event()
+        var activePackage: String? = null
+        var activeStartTime = startTime
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (event.eventType != UsageEvents.Event.MOVE_TO_FOREGROUND || packageName.isBlank()) {
                 continue
             }
-            val current = aggregate[entry.packageName] ?: 0L
-            aggregate[entry.packageName] = current + entry.totalTimeInForeground
+
+            activePackage?.let { foregroundPackage ->
+                val duration = (event.timeStamp - activeStartTime).coerceAtLeast(0L)
+                if (duration > 0L) {
+                    aggregate[foregroundPackage] = (aggregate[foregroundPackage] ?: 0L) + duration
+                }
+            }
+
+            activePackage = packageName
+            activeStartTime = event.timeStamp
         }
-        result.success(aggregate)
+
+        activePackage?.let { foregroundPackage ->
+            val duration = (endTime - activeStartTime).coerceAtLeast(0L)
+            if (duration > 0L) {
+                aggregate[foregroundPackage] = (aggregate[foregroundPackage] ?: 0L) + duration
+            }
+        }
+
+        return aggregate
     }
 
     private fun hasUsageStatsPermission(): Boolean {
@@ -431,6 +455,14 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         } catch (error: IllegalArgumentException) {
             result.error("suspend_failed", "Failed to suspend one or more packages.", error.message)
         }
+    }
+
+    private fun updateTempoSettings(sensitivity: String, restrictedPackages: List<String>) {
+        val prefs = getSharedPreferences(REDIRECT_PREFS, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(TEMPO_SENSITIVITY_KEY, sensitivity)
+            .putStringSet(TEMPO_RESTRICTED_PACKAGES_KEY, restrictedPackages.toSet())
+            .apply()
     }
 
     private fun setKioskMode(enable: Boolean, result: MethodChannel.Result) {
@@ -622,6 +654,8 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     companion object {
         private const val REDIRECT_PREFS = "obeisance_mdm"
         private const val REDIRECT_RULES_KEY = "redirect_rules"
+        private const val TEMPO_SENSITIVITY_KEY = "tempo_sensitivity"
+        private const val TEMPO_RESTRICTED_PACKAGES_KEY = "tempo_restricted_packages"
         private const val USAGE_WINDOW_MS = 24 * 60 * 60 * 1000L
         private const val ACTION_ADMIN_DISABLED_SOS = "com.obeisance.app.ACTION_ADMIN_DISABLED_SOS"
         private const val CHANNEL_ANCHOR = "ANCHOR"

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers/demo_mode_provider.dart';
+import '../dashboard/usage_screen.dart';
 import '../growth/invite_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -154,6 +155,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         subtitle: Text('Read-only sample data is active'),
                       ),
                     ),
+                  const UsageDashboardTile(),
                   const InviteDashboard(),
                   const SizedBox(height: 10),
                   const GenerateInviteButton(),
