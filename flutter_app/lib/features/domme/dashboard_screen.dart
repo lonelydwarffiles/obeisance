@@ -1,15 +1,19 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-class DashboardScreen extends StatefulWidget {
+import '../../core/providers/demo_mode_provider.dart';
+import '../growth/invite_screen.dart';
+
+class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   static const _backendBaseUrl = 'http://<backend-url>';
 
   final Dio _dio = Dio(
@@ -119,6 +123,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final demoMode = ref.watch(demoModeProvider);
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6F8),
       appBar: AppBar(
@@ -140,6 +145,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         style: const TextStyle(color: Colors.redAccent),
                       ),
                     ),
+                  if (demoMode)
+                    const Card(
+                      margin: EdgeInsets.only(bottom: 12),
+                      child: ListTile(
+                        leading: Icon(Icons.visibility),
+                        title: Text('DemoMode'),
+                        subtitle: Text('Read-only sample data is active'),
+                      ),
+                    ),
+                  const InviteDashboard(),
+                  const SizedBox(height: 10),
+                  const GenerateInviteButton(),
+                  const SizedBox(height: 14),
                   for (final lease in _leases)
                     Dismissible(
                       key: ValueKey(lease.id),
