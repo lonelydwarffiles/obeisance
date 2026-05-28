@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.billing import router as billing_router
 from app.api.routes.device import router as device_router
 from app.api.routes.submission import router as submission_router
 
@@ -15,6 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(billing_router, prefix="/api")
 app.include_router(submission_router, prefix="/api")
 app.include_router(device_router, prefix="/api")
 
