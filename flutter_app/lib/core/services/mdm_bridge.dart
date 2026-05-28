@@ -70,6 +70,32 @@ class MdmBridge {
     });
   }
 
+  Future<void> setKioskMode(bool enable) async {
+    await platform.invokeMethod<void>('setKioskMode', {
+      'enable': enable,
+    });
+  }
+
+  Future<void> setNotificationFilter(bool deepFocus) async {
+    await platform.invokeMethod<void>('setNotificationFilter', {
+      'deepFocus': deepFocus,
+    });
+  }
+
+  Future<void> forceNetworkTime() async {
+    await platform.invokeMethod<void>('forceNetworkTime');
+  }
+
+  Future<void> executeNuclearWipe({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed', 'Wipe requires explicit confirmation');
+    }
+    await Future<void>.delayed(const Duration(seconds: 3));
+    await platform.invokeMethod<void>('executeNuclearWipe', {
+      'confirmed': true,
+    });
+  }
+
   Future<void> pauseMedia() async {
     await platform.invokeMethod<void>('pauseMedia');
   }

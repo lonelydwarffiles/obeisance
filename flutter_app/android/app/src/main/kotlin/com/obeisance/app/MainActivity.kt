@@ -1,12 +1,15 @@
 package com.obeisance.app
 
 import android.app.AppOpsManager
+import android.app.NotificationManager
 import android.app.WallpaperManager
 import android.app.admin.DevicePolicyManager
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioManager
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
@@ -14,6 +17,8 @@ import android.net.VpnService
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.view.KeyEvent
@@ -29,10 +34,43 @@ import java.util.Locale
 class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     private lateinit var mdmChannel: MethodChannel
     private var textToSpeech: TextToSpeech? = null
+    private val adminDisabledReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_ADMIN_DISABLED_SOS) {
+                return
+            }
+            val payload = mapOf(
+                "event" to "admin_disabled_sos",
+                "device_id" to packageName,
+                "timestamp" to System.currentTimeMillis()
+            )
+            mdmChannel.invokeMethod("adminSafetySos", payload)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         textToSpeech = TextToSpeech(this, this)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(ACTION_ADMIN_DISABLED_SOS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(adminDisabledReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(adminDisabledReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        try {
+            unregisterReceiver(adminDisabledReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Receiver was not registered.
+        }
+        super.onStop()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -110,6 +148,25 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                     .filter { it.isNotEmpty() }
                 val suspended = call.argument<Boolean>("suspended") ?: true
                 setPackagesSuspended(packages, suspended, result)
+            }
+
+            "setKioskMode" -> {
+                val enable = call.argument<Boolean>("enable") ?: false
+                setKioskMode(enable, result)
+            }
+
+            "setNotificationFilter" -> {
+                val deepFocus = call.argument<Boolean>("deepFocus") ?: false
+                setNotificationFilter(deepFocus, result)
+            }
+
+            "forceNetworkTime" -> {
+                forceNetworkTime(result)
+            }
+
+            "executeNuclearWipe" -> {
+                val confirmed = call.argument<Boolean>("confirmed") ?: false
+                executeNuclearWipe(confirmed, result)
             }
 
             "pauseMedia" -> {
@@ -310,6 +367,117 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun setKioskMode(enable: Boolean, result: MethodChannel.Result) {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = getDeviceAdminComponent()
+        if (admin == null) {
+            result.error("admin_required", "Device admin is required for kiosk mode.", null)
+            return
+        }
+
+        try {
+            if (enable) {
+                dpm.setLockTaskPackages(admin, arrayOf(packageName))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && dpm.isLockTaskPermitted(packageName)) {
+                    startLockTask()
+                }
+            } else {
+                dpm.setLockTaskPackages(admin, emptyArray())
+                if (isInLockTaskMode()) {
+                    stopLockTask()
+                }
+            }
+            result.success(null)
+        } catch (error: SecurityException) {
+            result.error("kiosk_mode_failed", "Missing device owner/admin privileges.", error.message)
+        }
+    }
+
+    private fun setNotificationFilter(deepFocus: Boolean, result: MethodChannel.Result) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (!notificationManager.isNotificationPolicyAccessGranted) {
+            result.error(
+                "notification_policy_access_required",
+                "DND access is required. Launch Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS.",
+                Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
+            )
+            return
+        }
+
+        val filter = if (deepFocus) {
+            NotificationManager.INTERRUPTION_FILTER_NONE
+        } else {
+            NotificationManager.INTERRUPTION_FILTER_ALL
+        }
+        notificationManager.setInterruptionFilter(filter)
+        result.success(null)
+    }
+
+    private fun forceNetworkTime(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            result.error("unsupported", "Auto time enforcement requires API 30+.", null)
+            return
+        }
+
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = getDeviceAdminComponent()
+        if (admin == null) {
+            result.error("admin_required", "Device admin is required to force network time.", null)
+            return
+        }
+
+        try {
+            dpm.setAutoTimeRequired(admin, true)
+            result.success(null)
+        } catch (error: SecurityException) {
+            result.error("auto_time_failed", "Missing device owner/admin privileges.", error.message)
+        }
+    }
+
+    private fun executeNuclearWipe(confirmed: Boolean, result: MethodChannel.Result) {
+        if (!confirmed) {
+            result.error("confirmation_required", "Explicit confirmation is required before wipe.", null)
+            return
+        }
+
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = getDeviceAdminComponent()
+        if (admin == null) {
+            result.error("admin_required", "Managed device admin is required before wipe.", null)
+            return
+        }
+        val managed = dpm.isDeviceOwnerApp(packageName) || dpm.isProfileOwnerApp(packageName)
+        if (!managed) {
+            result.error("not_managed_device", "Device must be managed by this app before wipe.", null)
+            return
+        }
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                dpm.wipeData(0)
+            } catch (_: SecurityException) {
+                // If permissions changed during delay, wipe will fail safely.
+            }
+        }, 3_000L)
+        result.success(null)
+    }
+
+    private fun getDeviceAdminComponent(): ComponentName? {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val component = ComponentName(this, ObeisanceDeviceAdminReceiver::class.java)
+        return if (dpm.isAdminActive(component)) component else null
+    }
+
+    private fun isInLockTaskMode(): Boolean {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            activityManager.lockTaskModeState != android.app.ActivityManager.LOCK_TASK_MODE_NONE
+        } else {
+            @Suppress("DEPRECATION")
+            activityManager.isInLockTaskMode
+        }
+    }
+
     private fun dispatchMediaKey(keyCode: Int) {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
@@ -355,6 +523,7 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         private const val REDIRECT_PREFS = "obeisance_mdm"
         private const val REDIRECT_RULES_KEY = "redirect_rules"
         private const val USAGE_WINDOW_MS = 24 * 60 * 60 * 1000L
+        private const val ACTION_ADMIN_DISABLED_SOS = "com.obeisance.app.ACTION_ADMIN_DISABLED_SOS"
     }
 }
 
