@@ -12,6 +12,11 @@ class Settings:
     btcpay_pem: str = os.getenv("BTCPAY_PEM", "")
     btcpay_api_token: str = os.getenv("BTCPAY_API_TOKEN", "")
     btcpay_webhook_secret: str = os.getenv("BTCPAY_WEBHOOK_SECRET", "")
+    btcpay_store_id: str = os.getenv("BTCPAY_STORE_ID", "")
+    lnd_rest_url: str = os.getenv("LND_REST_URL", "")
+    lnd_macaroon: str = os.getenv("LND_MACAROON", "")
+    lnd_cert_path: str = os.getenv("LND_CERT_PATH", "")
+    lnd_fee_limit_sat: int = int(os.getenv("LND_FEE_LIMIT_SAT", "20"))
 
 
 settings = Settings()

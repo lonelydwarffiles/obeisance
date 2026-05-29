@@ -1,18 +1,36 @@
 import secrets
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Device, InviteLink, Tenant
+from app.db.models import Device, Invoice, InvoiceStatus, InviteLink, LeaseTier, Tenant
+from app.services.btcpay_client import BTCPayBridge
+
+CENT_PRECISION = Decimal("0.01")
+
+
+def _normalize_amount(value: Decimal) -> Decimal:
+    return value.quantize(CENT_PRECISION, rounding=ROUND_HALF_UP)
 
 
 @dataclass(slots=True)
 class GrowthStats:
     active_subs: int
     total_slots: int
+
+
+@dataclass(slots=True)
+class SubInvoiceResult:
+    invoice_id: UUID
+    btcpay_invoice_id: str
+    checkout_url: str | None
+    amount_total: Decimal
+    platform_fee: Decimal
+    dom_markup: Decimal
 
 
 def _generate_slug(length: int = 10) -> str:
@@ -74,3 +92,66 @@ async def get_growth_stats(owner_id: UUID, db: AsyncSession) -> GrowthStats:
     active_subs = int(active_subs_result.scalar_one() or 0)
 
     return GrowthStats(active_subs=active_subs, total_slots=total_slots)
+
+
+async def generate_sub_invoice(device_id: UUID, db: AsyncSession) -> SubInvoiceResult:
+    """Create a unified Central invoice and persist Dom payout split metadata."""
+    device = (await db.execute(select(Device).where(Device.id == device_id))).scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+    domme_id = device.leased_to_id
+    if domme_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Device is not assigned to a Dom")
+
+    lease_tier = (
+        await db.execute(
+            select(LeaseTier).where(
+                LeaseTier.domme_id == domme_id,
+                LeaseTier.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if lease_tier is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active lease tier for this Dom")
+
+    platform_fee = _normalize_amount(Decimal(str(lease_tier.base_central_fee)))
+    dom_markup = _normalize_amount(Decimal(str(lease_tier.domme_markup)))
+    total_fee = _normalize_amount(platform_fee + dom_markup)
+
+    bridge = BTCPayBridge()
+    # Persist first so internal id can be attached to BTCPay metadata for webhook mapping.
+    invoice = Invoice(
+        payer_id=None,
+        receiver_id=domme_id,
+        device_id=device_id,
+        amount_total=float(total_fee),
+        amount_central=float(platform_fee),
+        amount_domme=float(dom_markup),
+        dom_payout_amount=float(dom_markup),
+        status=InvoiceStatus.pending,
+    )
+    db.add(invoice)
+    await db.flush()
+
+    btcpay_invoice = await bridge.create_invoice(
+        amount=total_fee,
+        domme_wallet_id=str(domme_id),
+        sub_device_id=str(device_id),
+        internal_invoice_id=str(invoice.id),
+    )
+
+    invoice.btcpay_invoice_id = btcpay_invoice.invoice_id
+    invoice.btcpay_checkout_url = btcpay_invoice.checkout_link
+
+    await db.commit()
+    await db.refresh(invoice)
+
+    return SubInvoiceResult(
+        invoice_id=invoice.id,
+        btcpay_invoice_id=btcpay_invoice.invoice_id,
+        checkout_url=btcpay_invoice.checkout_link,
+        amount_total=total_fee,
+        platform_fee=platform_fee,
+        dom_markup=dom_markup,
+    )

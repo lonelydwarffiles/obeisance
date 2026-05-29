@@ -37,6 +37,8 @@ class TransactionStatus(str, enum.Enum):
 class InvoiceStatus(str, enum.Enum):
     pending = "pending"
     paid = "paid"
+    settled_and_split = "settled_and_split"
+    payout_failed = "payout_failed"
 
 
 class StoreItemScope(str, enum.Enum):
@@ -106,6 +108,8 @@ class Tenant(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
     base_slots: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lightning_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lnurl: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     owner: Mapped[User] = relationship(back_populates="tenant_profile")
 
@@ -420,10 +424,16 @@ class Invoice(Base):
     amount_total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     amount_central: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     amount_domme: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    dom_payout_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    dom_payout_sats: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[InvoiceStatus] = mapped_column(
         Enum(InvoiceStatus, name="invoice_status"), default=InvoiceStatus.pending, nullable=False
     )
     external_tx_hash: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    btcpay_invoice_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    btcpay_checkout_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    payout_tx_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payout_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     payer: Mapped[User | None] = relationship(foreign_keys=[payer_id])

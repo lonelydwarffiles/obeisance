@@ -99,7 +99,7 @@ class LedgerService:
         if invoice is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 
-        if invoice.status == InvoiceStatus.paid:
+        if invoice.status in {InvoiceStatus.paid, InvoiceStatus.settled_and_split}:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invoice already paid")
 
         existing_tx_result = await db.execute(

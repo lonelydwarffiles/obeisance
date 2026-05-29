@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.db.models import BillingDisplayMode, DommeSettings
+from app.db.models import BillingDisplayMode, DommeSettings, Invoice
+from app.services.billing import generate_sub_invoice
 from app.services.ledger import LedgerService
 
 router = APIRouter(tags=["ledger"])
@@ -20,6 +21,8 @@ class InvoiceRequest(BaseModel):
 
 class InvoiceResponse(BaseModel):
     invoice_id: UUID
+    btcpay_invoice_id: str | None = None
+    checkout_url: str | None = None
     amount_total: Decimal
     base_platform_fee: Decimal | None = None
     domme_markup: Decimal | None = None
@@ -34,6 +37,12 @@ class PaymentResponse(BaseModel):
     invoice_id: UUID
     status: str
     tx_hash: str | None
+
+
+class InvoiceStatusResponse(BaseModel):
+    invoice_id: UUID
+    status: str
+    checkout_url: str | None = None
 
 
 class BillingSettingsResponse(BaseModel):
@@ -55,16 +64,14 @@ async def create_invoice(
     payload: InvoiceRequest,
     db: AsyncSession = Depends(get_db),
 ) -> InvoiceResponse:
-    split = await LedgerService.calculate_invoice(
-        domme_id=payload.domme_id,
-        device_id=payload.device_id,
-        db=db,
-    )
+    split = await generate_sub_invoice(device_id=payload.device_id, db=db)
     return InvoiceResponse(
         invoice_id=split.invoice_id,
+        btcpay_invoice_id=split.btcpay_invoice_id,
+        checkout_url=split.checkout_url,
         amount_total=split.amount_total,
-        base_platform_fee=split.base_platform_fee,
-        domme_markup=split.domme_markup,
+        base_platform_fee=split.platform_fee,
+        domme_markup=split.dom_markup,
     )
 
 
@@ -86,6 +93,26 @@ async def pay_invoice(
         invoice_id=invoice.id,
         status=invoice.status.value,
         tx_hash=invoice.external_tx_hash,
+    )
+
+
+@router.get(
+    "/ledger/invoice/{invoice_id}",
+    response_model=InvoiceStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_invoice_status(
+    invoice_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceStatusResponse:
+    invoice = (await db.execute(select(Invoice).where(Invoice.id == invoice_id))).scalar_one_or_none()
+    if invoice is None:
+        return InvoiceStatusResponse(invoice_id=invoice_id, status="missing", checkout_url=None)
+
+    return InvoiceStatusResponse(
+        invoice_id=invoice.id,
+        status=invoice.status.value,
+        checkout_url=invoice.btcpay_checkout_url,
     )
 
 

@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.db.models import Device, DeviceStatus, Invoice
+from app.db.models import Device, DeviceStatus, Invoice, InvoiceStatus
 from app.services.ledger import LedgerService
 from app.services.mdm_bridge import MDMBridge
+from app.tasks.payout_handler import process_lightning_payout
 
 router = APIRouter(tags=["webhooks"])
 
@@ -57,6 +58,31 @@ def _extract_internal_invoice_id(payload: dict) -> str:
     )
 
 
+def _extract_settled_sats(payload: dict) -> int | None:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+
+    candidates = [
+        data.get("amount"),
+        data.get("value"),
+        data.get("paidAmount"),
+    ]
+
+    payment = data.get("payment") if isinstance(data.get("payment"), dict) else None
+    if payment is not None:
+        candidates.extend([payment.get("value"), payment.get("amount")])
+
+    for candidate in candidates:
+        try:
+            if candidate is None:
+                continue
+            sats = int(str(candidate))
+            if sats > 0:
+                return sats
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 @router.post("/webhooks/btcpay", response_model=WebhookAck, status_code=status.HTTP_200_OK)
 async def btcpay_webhook(
     request: Request,
@@ -69,7 +95,7 @@ async def btcpay_webhook(
 
     payload = json.loads(raw_body.decode("utf-8") or "{}")
     event_type = _extract_event_type(payload)
-    if event_type != "InvoicePaymentSettled":
+    if event_type not in {"InvoicePaymentSettled", "InvoiceSettled"}:
         return WebhookAck(received=True, event=event_type or "ignored")
 
     internal_invoice_id = _extract_internal_invoice_id(payload)
@@ -87,14 +113,27 @@ async def btcpay_webhook(
 
     btcpay_invoice_id = _extract_btcpay_invoice_id(payload) or f"btcpay:{invoice_uuid}"
 
-    await LedgerService.process_crypto_payment(
+    updated_invoice = await LedgerService.process_crypto_payment(
         invoice_id=invoice.id,
         tx_hash=btcpay_invoice_id,
         db=db,
     )
 
+    settled_sats = _extract_settled_sats(payload)
+    try:
+        updated_invoice = await process_lightning_payout(
+            invoice_id=invoice.id,
+            db=db,
+            settled_total_sats=settled_sats,
+        )
+    except HTTPException as exc:
+        invoice.payout_error = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        invoice.status = InvoiceStatus.payout_failed
+        await db.commit()
+        raise
+
     device = (await db.execute(select(Device).where(Device.id == invoice.device_id))).scalar_one_or_none()
-    if device is not None and device.status == DeviceStatus.lease_pending:
+    if device is not None and device.status == DeviceStatus.lease_pending and updated_invoice.status.value == "settled_and_split":
         unlocked = await MDMBridge.unlockDevice(device.id, db)
         if unlocked:
             device.status = DeviceStatus.leased

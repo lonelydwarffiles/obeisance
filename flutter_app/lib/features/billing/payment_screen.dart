@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../core/services/mdm_bridge.dart';
 
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -21,12 +24,18 @@ class _InvoiceData {
   const _InvoiceData({
     required this.invoiceId,
     required this.amountTotal,
+    this.checkoutUrl,
+    this.btcpayInvoiceId,
+    this.status,
     this.basePlatformFee,
     this.dommeMarkup,
   });
 
   final String invoiceId;
   final double amountTotal;
+  final String? checkoutUrl;
+  final String? btcpayInvoiceId;
+  final String? status;
   final double? basePlatformFee;
   final double? dommeMarkup;
 
@@ -36,6 +45,9 @@ class _InvoiceData {
     return _InvoiceData(
       invoiceId: (json['invoice_id'] as String?) ?? '',
       amountTotal: _parseDouble(json['amount_total']),
+      checkoutUrl: json['checkout_url'] as String?,
+      btcpayInvoiceId: json['btcpay_invoice_id'] as String?,
+      status: json['status'] as String?,
       basePlatformFee: json.containsKey('base_platform_fee') && json['base_platform_fee'] != null
           ? _parseDouble(json['base_platform_fee'])
           : null,
@@ -54,7 +66,7 @@ class _InvoiceData {
 }
 
 // ---------------------------------------------------------------------------
-// PaymentDashboard – sub-facing invoice + QR + tribute
+// PaymentDashboard – central checkout only
 // ---------------------------------------------------------------------------
 
 class PaymentDashboard extends StatefulWidget {
@@ -81,12 +93,10 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
   );
 
   bool _loading = true;
+  bool _verifyingPayment = false;
   String? _error;
   _InvoiceData? _invoice;
-
-  final _tributeAmountController = TextEditingController();
-  final _tributeMessageController = TextEditingController();
-  bool _sendingTribute = false;
+  final MdmBridge _mdmBridge = MdmBridge();
 
   @override
   void initState() {
@@ -126,43 +136,74 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
     }
   }
 
-  Future<void> _sendTribute() async {
-    final amountText = _tributeAmountController.text.trim();
-    final amount = double.tryParse(amountText);
-    if (amount == null || amount <= 0) {
+  Future<void> _openCentralCheckout() async {
+    final checkoutUrl = _invoice?.checkoutUrl;
+    if (checkoutUrl == null || checkoutUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid tribute amount.')),
+        const SnackBar(content: Text('Central checkout is unavailable right now.')),
       );
       return;
     }
-    setState(() => _sendingTribute = true);
-    try {
-      await _dio.post<void>(
-        '/api/ledger/tribute',
-        data: {
-          'recipient_id': widget.dommeId,
-          'amount': amount,
-          'message': _tributeMessageController.text.trim(),
-        },
-      );
-      if (!mounted) return;
-      _tributeAmountController.clear();
-      _tributeMessageController.clear();
+
+    final uri = Uri.tryParse(checkoutUrl);
+    if (uri == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tribute sent.')),
+        const SnackBar(content: Text('Central checkout URL is invalid.')),
+      );
+      return;
+    }
+
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open Central checkout.')),
+      );
+    }
+  }
+
+  Future<void> _verifyPaymentAndEnforce() async {
+    final invoiceId = _invoice?.invoiceId;
+    if (invoiceId == null || invoiceId.isEmpty) {
+      return;
+    }
+
+    setState(() => _verifyingPayment = true);
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/ledger/invoice/$invoiceId',
+      );
+
+      final invoice = _InvoiceData.fromJson(response.data ?? {});
+      if (!mounted) return;
+
+      setState(() => _invoice = invoice);
+      final settled = invoice.status == 'settled_and_split' || invoice.status == 'paid';
+      if (settled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Central payment confirmed.')),
+        );
+        return;
+      }
+
+      await _mdmBridge.triggerLock();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Central invoice remains unpaid. Device locked.')),
       );
     } on DioException catch (e) {
       if (!mounted) return;
+      await _mdmBridge.triggerLock();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_extractDetail(e) ?? 'Tribute failed.')),
+        SnackBar(content: Text(_extractDetail(e) ?? 'Unable to verify payment. Device locked.')),
       );
     } catch (_) {
       if (!mounted) return;
+      await _mdmBridge.triggerLock();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tribute failed.')),
+        const SnackBar(content: Text('Payment verification failed. Device locked.')),
       );
     } finally {
-      if (mounted) setState(() => _sendingTribute = false);
+      if (mounted) setState(() => _verifyingPayment = false);
     }
   }
 
@@ -178,15 +219,14 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
     return jsonEncode({
       'invoice_id': invoice.invoiceId,
       'amount_total': invoice.amountTotal,
-      'currency': 'USDC',
+      'checkout_url': invoice.checkoutUrl,
+      'currency': 'USD',
     });
   }
 
   @override
   void dispose() {
     _dio.close();
-    _tributeAmountController.dispose();
-    _tributeMessageController.dispose();
     super.dispose();
   }
 
@@ -196,7 +236,7 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
       backgroundColor: _bgColor,
       appBar: AppBar(
         backgroundColor: const Color(0xFF111111),
-        title: const Text('Payment Dashboard'),
+        title: const Text('Central Checkout'),
         actions: [
           IconButton(
             onPressed: _fetchInvoice,
@@ -217,14 +257,50 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
                     _InvoiceSummaryCard(invoice: _invoice!),
                     const SizedBox(height: 16),
                     _QrInvoiceCard(qrData: _buildQrPayload(_invoice!)),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _openCentralCheckout,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _accentColor,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text(
+                          'Open Central BTCPay Checkout',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _verifyingPayment ? null : _verifyPaymentAndEnforce,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                          side: const BorderSide(color: Colors.white24),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: _verifyingPayment
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.verified_outlined),
+                        label: const Text('Verify Central Payment'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Only Central can accept lease payments. Unpaid invoices result in an enforced device lock.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
                   ],
-                  _TributeCard(
-                    amountController: _tributeAmountController,
-                    messageController: _tributeMessageController,
-                    sending: _sendingTribute,
-                    onSend: _sendTribute,
-                  ),
                 ],
               ),
             ),
@@ -349,102 +425,9 @@ class _QrInvoiceCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Pay with USDC on Solana or Ethereum',
+            'Scan for Central invoice metadata and complete checkout in BTCPay.',
             style: TextStyle(color: Colors.white38, fontSize: 11),
             textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TributeCard extends StatelessWidget {
-  const _TributeCard({
-    required this.amountController,
-    required this.messageController,
-    required this.sending,
-    required this.onSend,
-  });
-
-  final TextEditingController amountController;
-  final TextEditingController messageController;
-  final bool sending;
-  final VoidCallback onSend;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: _surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Send a Tribute',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: amountController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(
-              labelText: 'Amount (USDC)',
-              labelStyle: TextStyle(color: Colors.white54),
-              prefixText: '\$ ',
-              prefixStyle: TextStyle(color: Colors.white70),
-              enabledBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: Colors.white24),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: _accentColor),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: messageController,
-            maxLines: 2,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(
-              labelText: 'Message (optional)',
-              labelStyle: TextStyle(color: Colors.white54),
-              enabledBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: Colors.white24),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: _accentColor),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: sending ? null : onSend,
-              style: FilledButton.styleFrom(
-                backgroundColor: _accentColor,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-              icon: sending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-                    )
-                  : const Icon(Icons.favorite_border),
-              label: const Text('Send Tribute', style: TextStyle(fontWeight: FontWeight.w700)),
-            ),
           ),
         ],
       ),
