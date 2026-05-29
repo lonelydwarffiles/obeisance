@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import BillingCycle, BillingCycleStatus, Device, DeviceStatus, User
+from app.services.audit import record_audit_event
 from app.services.notifications import send_revoke_authority_command
 
 
@@ -43,5 +44,23 @@ async def run_billing_enforcement_sweeper() -> None:
 
             for device in devices:
                 await send_revoke_authority_command(device.id)
+                await record_audit_event(
+                    db=db,
+                    actor_user_id=cycle.dom_id,
+                    device_id=device.id,
+                    action="authority_revoked_overdue",
+                    target_type="device",
+                    target_id=str(device.id),
+                    metadata={"billing_cycle_id": str(cycle.id)},
+                )
+
+            await record_audit_event(
+                db=db,
+                actor_user_id=cycle.dom_id,
+                action="billing_cycle_marked_overdue",
+                target_type="billing_cycle",
+                target_id=str(cycle.id),
+                metadata={},
+            )
 
         await db.commit()

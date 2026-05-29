@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import BillingCycle, BillingCycleStatus, Device, DeviceStatus, Invoice, InvoiceStatus, User
+from app.services.audit import record_audit_event
 from app.services.ledger import LedgerService
 from app.services.mdm_bridge import MDMBridge
 from app.tasks.payout_handler import process_lightning_payout
@@ -143,6 +144,15 @@ async def btcpay_webhook(
             start = renewal if renewal is not None and renewal > now else now
             dom.billing_renewal_date = start + timedelta(days=30)
             dom.is_active = True
+
+        await record_audit_event(
+            db=db,
+            actor_user_id=billing_cycle.dom_id,
+            action="billing_cycle_paid",
+            target_type="billing_cycle",
+            target_id=str(billing_cycle.id),
+            metadata={"event": event_type, "btcpay_invoice_id": btcpay_invoice_id},
+        )
         await db.commit()
         return WebhookAck(
             received=True,
@@ -181,8 +191,28 @@ async def btcpay_webhook(
     except HTTPException as exc:
         invoice.payout_error = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         invoice.status = InvoiceStatus.payout_failed
+        await record_audit_event(
+            db=db,
+            device_id=invoice.device_id,
+            action="invoice_payout_failed",
+            target_type="invoice",
+            target_id=str(invoice.id),
+            metadata={"error": invoice.payout_error},
+        )
         await db.commit()
         raise
+
+    await record_audit_event(
+        db=db,
+        device_id=invoice.device_id,
+        action="invoice_settled_and_split",
+        target_type="invoice",
+        target_id=str(invoice.id),
+        metadata={
+            "status": updated_invoice.status.value,
+            "settled_total_sats": settled_sats,
+        },
+    )
 
     device = (await db.execute(select(Device).where(Device.id == invoice.device_id))).scalar_one_or_none()
     if device is not None and device.status == DeviceStatus.lease_pending and updated_invoice.status.value == "settled_and_split":

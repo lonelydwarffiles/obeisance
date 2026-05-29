@@ -1,8 +1,14 @@
+import logging
+import time
+from uuid import uuid4
+
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.billing import router as billing_router
 from app.api.routes.candidate import router as candidate_router
+from app.api.routes.central import router as central_router
 from app.api.routes.device import router as device_router
 from app.api.routes.dynamic import router as dynamic_router
 from app.api.routes.growth import router as growth_router
@@ -10,6 +16,7 @@ from app.api.routes.ledger import router as ledger_router
 from app.api.routes.library import router as library_router
 from app.api.routes.metrics import router as metrics_router
 from app.api.routes.notes import router as notes_router
+from app.api.routes.policy import router as policy_router
 from app.api.routes.staging import router as staging_router
 from app.api.routes.store import router as store_router
 from app.api.routes.submission import router as submission_router
@@ -19,6 +26,7 @@ from app.db.database import init_db
 
 
 app = FastAPI(title="Leashio MDM API")
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +38,7 @@ app.add_middleware(
 
 app.include_router(billing_router, prefix="/api")
 app.include_router(candidate_router, prefix="/api")
+app.include_router(central_router, prefix="/api")
 app.include_router(device_router, prefix="/api")
 app.include_router(dynamic_router, prefix="/api")
 app.include_router(growth_router, prefix="/api")
@@ -37,6 +46,7 @@ app.include_router(ledger_router, prefix="/api")
 app.include_router(library_router, prefix="/api")
 app.include_router(metrics_router, prefix="/api")
 app.include_router(notes_router, prefix="/api")
+app.include_router(policy_router, prefix="/api")
 app.include_router(staging_router, prefix="/api")
 app.include_router(store_router, prefix="/api")
 app.include_router(submission_router, prefix="/api")
@@ -59,3 +69,21 @@ async def on_shutdown() -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    response.headers["X-Request-Id"] = request_id
+    logger.info(
+        "request method=%s path=%s status=%s duration_ms=%.2f request_id=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+        request_id,
+    )
+    return response

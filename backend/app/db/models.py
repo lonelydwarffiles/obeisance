@@ -69,6 +69,13 @@ class BillingCycleStatus(str, enum.Enum):
     overdue = "overdue"
 
 
+class PetitionStatus(str, enum.Enum):
+    submitted = "submitted"
+    approved = "approved"
+    denied = "denied"
+    expired = "expired"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -113,6 +120,18 @@ class User(Base):
         back_populates="dom",
         cascade="all, delete-orphan",
         foreign_keys="BillingCycle.dom_id",
+    )
+    petitions_for_review: Mapped[list["Petition"]] = relationship(
+        back_populates="dom",
+        foreign_keys="Petition.dom_id",
+    )
+    submitted_petitions: Mapped[list["Petition"]] = relationship(
+        back_populates="requester",
+        foreign_keys="Petition.requester_user_id",
+    )
+    audit_entries: Mapped[list["AuditLog"]] = relationship(
+        back_populates="actor",
+        foreign_keys="AuditLog.actor_user_id",
     )
 
 
@@ -174,6 +193,10 @@ class Device(Base):
     tempo_share_summaries: Mapped[list["TempoShareSummary"]] = relationship(
         back_populates="device", cascade="all, delete-orphan"
     )
+    policy_profile: Mapped["DevicePolicyProfile | None"] = relationship(
+        back_populates="device", uselist=False, cascade="all, delete-orphan"
+    )
+    petitions: Mapped[list["Petition"]] = relationship(back_populates="device")
 
 
 class ApiKey(Base):
@@ -446,6 +469,63 @@ class BillingCycle(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     dom: Mapped[User] = relationship(back_populates="billing_cycles", foreign_keys=[dom_id])
+
+
+class DevicePolicyProfile(Base):
+    __tablename__ = "device_policy_profiles"
+    __table_args__ = (UniqueConstraint("device_id", name="uq_device_policy_profile_device"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    geofence_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    geofence_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    geofence_radius_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
+    restricted_packages: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    sleep_start_time: Mapped[time | None] = mapped_column(Time(timezone=False), nullable=True)
+    sleep_end_time: Mapped[time | None] = mapped_column(Time(timezone=False), nullable=True)
+    sleep_non_essential_packages: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    device: Mapped[Device] = relationship(back_populates="policy_profile")
+
+
+class Petition(Base):
+    __tablename__ = "petitions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dom_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    requester_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=True)
+    package_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    status: Mapped[PetitionStatus] = mapped_column(
+        Enum(PetitionStatus, name="petition_status"),
+        nullable=False,
+        default=PetitionStatus.submitted,
+    )
+    approved_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    dom: Mapped[User] = relationship(back_populates="petitions_for_review", foreign_keys=[dom_id])
+    requester: Mapped[User | None] = relationship(back_populates="submitted_petitions", foreign_keys=[requester_user_id])
+    device: Mapped[Device | None] = relationship(back_populates="petitions", foreign_keys=[device_id])
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    actor: Mapped[User | None] = relationship(back_populates="audit_entries", foreign_keys=[actor_user_id])
+    device: Mapped[Device | None] = relationship(foreign_keys=[device_id])
 
 
 class Invoice(Base):

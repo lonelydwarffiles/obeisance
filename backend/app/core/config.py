@@ -19,6 +19,8 @@ class Settings:
     lnd_fee_limit_sat: int = int(os.getenv("LND_FEE_LIMIT_SAT", "20"))
     base_platform_fee: float = float(os.getenv("BASE_PLATFORM_FEE", "19.00"))
     billing_grace_hours: int = int(os.getenv("BILLING_GRACE_HOURS", "48"))
+    push_gateway_url: str = os.getenv("PUSH_GATEWAY_URL", "")
+    push_gateway_token: str = os.getenv("PUSH_GATEWAY_TOKEN", "")
 
 
 settings = Settings()
