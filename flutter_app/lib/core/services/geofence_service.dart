@@ -1,9 +1,12 @@
 import 'dart:async';
 
-import 'package:flutter_background_geolocation/flutter_background_geolocation.dart' as bg;
+import 'package:flutter_background_geolocation/flutter_background_geolocation.dart'
+    as bg;
+import 'package:obeisance/core/models/geofence_rule.dart';
 import 'package:obeisance/core/services/mdm_bridge.dart';
 
-typedef FenceEventPublisher = Future<void> Function(Map<String, dynamic> payload);
+typedef FenceEventPublisher = Future<void> Function(
+    Map<String, dynamic> payload);
 typedef DeviceIdResolver = Future<String> Function();
 
 class GeofenceService {
@@ -21,14 +24,15 @@ class GeofenceService {
   final FenceEventPublisher _publishEvent;
   final DeviceIdResolver _resolveDeviceId;
   final bool Function(DateTime now) _isWorkingHours;
+  GeofenceRule? _activeRule;
 
   StreamSubscription<bg.GeofenceEvent>? _geofenceSubscription;
 
   Future<void> start({
-    required double kennelLatitude,
-    required double kennelLongitude,
-    double radiusMeters = 50,
+    required GeofenceRule rule,
   }) async {
+    _activeRule = rule;
+
     await bg.BackgroundGeolocation.ready(
       bg.Config(
         desiredAccuracy: bg.Config.DESIRED_ACCURACY_HIGH,
@@ -44,10 +48,10 @@ class GeofenceService {
 
     await bg.BackgroundGeolocation.addGeofence(
       bg.Geofence(
-        identifier: 'kennel_primary',
-        latitude: kennelLatitude,
-        longitude: kennelLongitude,
-        radius: radiusMeters,
+        identifier: rule.identifier,
+        latitude: rule.latitude,
+        longitude: rule.longitude,
+        radius: rule.radiusMeters,
         notifyOnEntry: true,
         notifyOnExit: true,
       ),
@@ -59,25 +63,36 @@ class GeofenceService {
   Future<void> stop() async {
     await _geofenceSubscription?.cancel();
     _geofenceSubscription = null;
+    _activeRule = null;
     await bg.BackgroundGeolocation.stop();
   }
 
   Future<void> _handleGeofenceEvent(bg.GeofenceEvent event) async {
-    if (event.action != 'EXIT') {
+    final action = event.action.toUpperCase();
+    if (action != 'ENTER' && action != 'EXIT') {
       return;
     }
 
     final now = DateTime.now();
     final deviceId = await _resolveDeviceId();
     final payload = <String, dynamic>{
-      'event': 'fence_breach',
+      'event': action == 'ENTER' ? 'fence_enter' : 'fence_breach',
       'device_id': deviceId,
       'geofence_id': event.identifier,
+      'transition': action,
       'timestamp': now.toUtc().toIso8601String(),
       'coords': event.location.coords.toMap(),
     };
 
     await _publishEvent(payload);
+
+    if (action == 'ENTER') {
+      final restricted = _activeRule?.restrictedPackages ?? const <String>[];
+      if (restricted.isNotEmpty) {
+        await _mdmBridge.setPackagesSuspended(restricted, suspended: true);
+      }
+      return;
+    }
 
     if (_isWorkingHours(now)) {
       await _mdmBridge.triggerLock();

@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import 'package:obeisance/core/models/sleep_schedule.dart';
+
 class MdmBridge {
   static const MethodChannel platform = MethodChannel('app.obeisance/mdm');
 
@@ -32,7 +34,8 @@ class MdmBridge {
   }
 
   Future<List<String>> gatherAppInventory() async {
-    final response = await platform.invokeMethod<List<dynamic>>('gatherAppInventory');
+    final response =
+        await platform.invokeMethod<List<dynamic>>('gatherAppInventory');
     if (response == null) {
       return const [];
     }
@@ -40,19 +43,23 @@ class MdmBridge {
   }
 
   Future<Map<String, int>> gatherUsageStats() async {
-    final response = await platform.invokeMapMethod<String, dynamic>('gatherUsageStats');
+    final response =
+        await platform.invokeMapMethod<String, dynamic>('gatherUsageStats');
     if (response == null) {
       return const {};
     }
-    return response.map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0));
+    return response
+        .map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0));
   }
 
   Future<Map<String, int>> getDailyScreentime() async {
-    final response = await platform.invokeMapMethod<String, dynamic>('getScreentimeStats');
+    final response =
+        await platform.invokeMapMethod<String, dynamic>('getScreentimeStats');
     if (response == null) {
       return const {};
     }
-    return response.map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0));
+    return response
+        .map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0));
   }
 
   Future<void> startDnsFilter() async {
@@ -71,11 +78,26 @@ class MdmBridge {
     }
   }
 
-  Future<void> setPackagesSuspended(List<String> packageNames, {bool suspended = true}) async {
+  Future<void> setPackagesSuspended(List<String> packageNames,
+      {bool suspended = true}) async {
     await platform.invokeMethod<void>('setPackagesSuspended', {
       'packages': packageNames,
       'suspended': suspended,
     });
+  }
+
+  Future<void> scheduleSleepMode({
+    required SleepSchedule schedule,
+    required List<String> nonEssentialPackages,
+  }) async {
+    await platform.invokeMethod<void>('scheduleSleepMode', {
+      ...schedule.toMap(),
+      'non_essential_packages': nonEssentialPackages,
+    });
+  }
+
+  Future<void> cancelSleepMode() async {
+    await platform.invokeMethod<void>('cancelSleepMode');
   }
 
   Future<void> suspendPackage(String packageName) async {
@@ -110,7 +132,8 @@ class MdmBridge {
 
   Future<void> executeNuclearWipe({required bool confirmed}) async {
     if (!confirmed) {
-      throw ArgumentError.value(confirmed, 'confirmed', 'Wipe requires explicit confirmation');
+      throw ArgumentError.value(
+          confirmed, 'confirmed', 'Wipe requires explicit confirmation');
     }
     await Future<void>.delayed(const Duration(seconds: 3));
     await platform.invokeMethod<void>('executeNuclearWipe', {
@@ -127,7 +150,8 @@ class MdmBridge {
   }
 
   Future<Map<String, String?>> getNowPlaying() async {
-    final response = await platform.invokeMapMethod<String, dynamic>('getNowPlaying');
+    final response =
+        await platform.invokeMapMethod<String, dynamic>('getNowPlaying');
     if (response == null) {
       return const {
         'track': null,

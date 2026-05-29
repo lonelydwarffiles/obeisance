@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #0a0a0a;
+  color: #f5f3ff;
+}
+
+body {
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(155, 48, 255, 0.35);
+  color: #ffffff;
+}
+
+@layer components {
+  .section-shell {
+    @apply mx-auto w-full max-w-6xl px-6 py-20 md:px-10;
+  }
+
+  .heading-display {
+    @apply font-serif tracking-tight text-white;
+  }
+
+  .copy-base {
+    @apply font-sans text-base leading-relaxed text-violet-100/80;
+  }
+}

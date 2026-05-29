@@ -31,21 +31,18 @@ class LightningPayoutResult:
 
 class BTCPayBridge:
     def __init__(self) -> None:
-        if BTCPayClient is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="btcpay-python is not installed",
+        self._client = None
+        if (
+            BTCPayClient is not None
+            and settings.btcpay_host
+            and settings.btcpay_pem
+            and settings.btcpay_api_token
+        ):
+            self._client = BTCPayClient(
+                host=settings.btcpay_host.rstrip("/"),
+                pem=settings.btcpay_pem,
+                tokens={"merchant": settings.btcpay_api_token},
             )
-        if not settings.btcpay_host or not settings.btcpay_pem or not settings.btcpay_api_token:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="BTCPay settings are missing",
-            )
-        self._client = BTCPayClient(
-            host=settings.btcpay_host.rstrip("/"),
-            pem=settings.btcpay_pem,
-            tokens={"merchant": settings.btcpay_api_token},
-        )
 
     async def create_invoice(
         self,
@@ -54,6 +51,11 @@ class BTCPayBridge:
         sub_device_id: str,
         internal_invoice_id: str,
     ) -> BTCPayInvoiceResult:
+        if self._client is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="btcpay-python client settings are missing",
+            )
         payload = {
             "price": str(amount),
             "currency": "USD",
@@ -73,6 +75,58 @@ class BTCPayBridge:
             )
         checkout_link = invoice.get("url") or invoice.get("checkoutLink")
         bitcoin_uri = invoice.get("bitcoinURI") or invoice.get("bitcoin_uri")
+        return BTCPayInvoiceResult(
+            invoice_id=invoice_id,
+            checkout_link=checkout_link,
+            bitcoin_uri=bitcoin_uri,
+        )
+
+    async def create_store_invoice(
+        self,
+        amount: Decimal,
+        item_desc: str,
+        metadata: dict[str, str] | None = None,
+    ) -> BTCPayInvoiceResult:
+        if not settings.btcpay_host or not settings.btcpay_api_token or not settings.btcpay_store_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="BTCPay Greenfield settings are missing",
+            )
+
+        payload = {
+            "amount": str(amount),
+            "currency": "USD",
+            "checkout": {"speedPolicy": "MediumSpeed", "paymentMethods": ["BTC-LightningNetwork"]},
+            "metadata": metadata or {},
+            "description": item_desc,
+        }
+
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"{settings.btcpay_host.rstrip('/')}/api/v1/stores/{settings.btcpay_store_id}/invoices",
+                json=payload,
+                headers={
+                    "Authorization": f"token {settings.btcpay_api_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"BTCPay store invoice creation failed: {response.text}",
+            )
+
+        data = response.json()
+        invoice_id = str(data.get("id") or "")
+        if not invoice_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="BTCPay store invoice creation returned no id",
+            )
+
+        checkout_link = data.get("checkoutLink") or data.get("url")
+        bitcoin_uri = data.get("bitcoinURI")
         return BTCPayInvoiceResult(
             invoice_id=invoice_id,
             checkout_link=checkout_link,

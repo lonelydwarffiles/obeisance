@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.db.models import Device, DeviceStatus, Invoice, InvoiceStatus
+from app.db.models import BillingCycle, BillingCycleStatus, Device, DeviceStatus, Invoice, InvoiceStatus, User
 from app.services.ledger import LedgerService
 from app.services.mdm_bridge import MDMBridge
 from app.tasks.payout_handler import process_lightning_payout
@@ -22,6 +23,7 @@ class WebhookAck(BaseModel):
     received: bool
     event: str
     invoice_id: UUID | None = None
+    billing_cycle_id: UUID | None = None
 
 
 def _verify_signature(raw_body: bytes, sig_header: str | None) -> bool:
@@ -56,6 +58,15 @@ def _extract_internal_invoice_id(payload: dict) -> str:
         or payload.get("orderId")
         or ""
     )
+
+
+def _extract_billing_cycle_id(payload: dict) -> str:
+    metadata: dict = {}
+    if isinstance(payload.get("metadata"), dict):
+        metadata = payload["metadata"]
+    elif isinstance(payload.get("data"), dict) and isinstance(payload["data"].get("metadata"), dict):
+        metadata = payload["data"]["metadata"]
+    return str(metadata.get("billing_cycle_id") or "")
 
 
 def _extract_settled_sats(payload: dict) -> int | None:
@@ -98,6 +109,47 @@ async def btcpay_webhook(
     if event_type not in {"InvoicePaymentSettled", "InvoiceSettled"}:
         return WebhookAck(received=True, event=event_type or "ignored")
 
+    btcpay_invoice_id = _extract_btcpay_invoice_id(payload)
+
+    billing_cycle = (
+        await db.execute(select(BillingCycle).where(BillingCycle.btcpay_invoice_id == btcpay_invoice_id))
+    ).scalar_one_or_none()
+    if billing_cycle is None:
+        billing_cycle_id = _extract_billing_cycle_id(payload)
+        if billing_cycle_id:
+            try:
+                billing_cycle_uuid = UUID(billing_cycle_id)
+                billing_cycle = (
+                    await db.execute(select(BillingCycle).where(BillingCycle.id == billing_cycle_uuid))
+                ).scalar_one_or_none()
+            except ValueError:
+                billing_cycle = None
+
+    if billing_cycle is not None:
+        if billing_cycle.status == BillingCycleStatus.paid:
+            return WebhookAck(
+                received=True,
+                event=event_type,
+                billing_cycle_id=billing_cycle.id,
+            )
+
+        billing_cycle.status = BillingCycleStatus.paid
+        dom = (await db.execute(select(User).where(User.id == billing_cycle.dom_id))).scalar_one_or_none()
+        if dom is not None:
+            now = datetime.now(timezone.utc)
+            renewal = dom.billing_renewal_date
+            if renewal is not None and renewal.tzinfo is None:
+                renewal = renewal.replace(tzinfo=timezone.utc)
+            start = renewal if renewal is not None and renewal > now else now
+            dom.billing_renewal_date = start + timedelta(days=30)
+            dom.is_active = True
+        await db.commit()
+        return WebhookAck(
+            received=True,
+            event=event_type,
+            billing_cycle_id=billing_cycle.id,
+        )
+
     internal_invoice_id = _extract_internal_invoice_id(payload)
     if not internal_invoice_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing internal invoice identifier")
@@ -111,7 +163,7 @@ async def btcpay_webhook(
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 
-    btcpay_invoice_id = _extract_btcpay_invoice_id(payload) or f"btcpay:{invoice_uuid}"
+    btcpay_invoice_id = btcpay_invoice_id or f"btcpay:{invoice_uuid}"
 
     updated_invoice = await LedgerService.process_crypto_payment(
         invoice_id=invoice.id,

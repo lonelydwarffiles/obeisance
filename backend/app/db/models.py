@@ -63,6 +63,12 @@ class TempoShareCadence(str, enum.Enum):
     monthly = "monthly"
 
 
+class BillingCycleStatus(str, enum.Enum):
+    pending = "pending"
+    paid = "paid"
+    overdue = "overdue"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -72,6 +78,9 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole, name="user_role"), nullable=False, default=UserRole.domme)
+    billing_renewal_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
     centrally_owned_devices: Mapped[list["Device"]] = relationship(
         back_populates="central_owner",
@@ -100,6 +109,11 @@ class User(Base):
     )
     tenant_profile: Mapped["Tenant | None"] = relationship(back_populates="owner", uselist=False)
     created_invite_links: Mapped[list["InviteLink"]] = relationship(back_populates="creator")
+    billing_cycles: Mapped[list["BillingCycle"]] = relationship(
+        back_populates="dom",
+        cascade="all, delete-orphan",
+        foreign_keys="BillingCycle.dom_id",
+    )
 
 
 class Tenant(Base):
@@ -412,6 +426,26 @@ class DailyPrepTask(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class BillingCycle(Base):
+    __tablename__ = "billing_cycles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dom_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    cycle_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cycle_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    active_devices_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_owed: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    btcpay_invoice_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    status: Mapped[BillingCycleStatus] = mapped_column(
+        Enum(BillingCycleStatus, name="billing_cycle_status"),
+        nullable=False,
+        default=BillingCycleStatus.pending,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    dom: Mapped[User] = relationship(back_populates="billing_cycles", foreign_keys=[dom_id])
 
 
 class Invoice(Base):

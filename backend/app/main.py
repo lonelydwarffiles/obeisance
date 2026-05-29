@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes.billing import router as billing_router
 from app.api.routes.candidate import router as candidate_router
 from app.api.routes.device import router as device_router
+from app.api.routes.dynamic import router as dynamic_router
 from app.api.routes.growth import router as growth_router
 from app.api.routes.ledger import router as ledger_router
 from app.api.routes.library import router as library_router
@@ -30,6 +31,7 @@ app.add_middleware(
 app.include_router(billing_router, prefix="/api")
 app.include_router(candidate_router, prefix="/api")
 app.include_router(device_router, prefix="/api")
+app.include_router(dynamic_router, prefix="/api")
 app.include_router(growth_router, prefix="/api")
 app.include_router(ledger_router, prefix="/api")
 app.include_router(library_router, prefix="/api")

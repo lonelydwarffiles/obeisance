@@ -160,6 +160,29 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 setPackagesSuspended(packages, suspended, result)
             }
 
+            "scheduleSleepMode" -> {
+                val startTime = call.argument<String>("start_time")
+                val endTime = call.argument<String>("end_time")
+                if (startTime.isNullOrBlank() || endTime.isNullOrBlank()) {
+                    result.error("invalid_args", "start_time and end_time are required", null)
+                    return
+                }
+                val nonEssentialPackages = call.argument<List<String>>("non_essential_packages").orEmpty()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                try {
+                    SlumberModeManager.schedule(this, startTime, endTime, nonEssentialPackages)
+                    result.success(null)
+                } catch (error: SecurityException) {
+                    result.error("sleep_schedule_failed", "Exact alarm scheduling failed.", error.message)
+                }
+            }
+
+            "cancelSleepMode" -> {
+                SlumberModeManager.cancel(this)
+                result.success(null)
+            }
+
             "updateTempoSettings" -> {
                 val sensitivity = call.argument<String>("sensitivity")
                 if (sensitivity.isNullOrBlank()) {
