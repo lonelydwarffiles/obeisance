@@ -25,7 +25,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
+import android.text.TextUtils
 import android.view.KeyEvent
+import android.net.Uri
+import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -38,6 +41,7 @@ import java.util.Locale
 
 class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     private lateinit var mdmChannel: MethodChannel
+    private lateinit var complianceChannel: MethodChannel
     private var textToSpeech: TextToSpeech? = null
     private val adminDisabledReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -84,6 +88,118 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         mdmChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "app.obeisance/mdm")
         mdmChannel.setMethodCallHandler { call, result ->
             handleMdmCall(call, result)
+        }
+
+        complianceChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "obeisance.mdm/compliance")
+        complianceChannel.setMethodCallHandler { call, result ->
+            handleComplianceCall(call, result)
+        }
+    }
+
+    private fun handleComplianceCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "requestDeviceAdmin" -> {
+                requestDeviceAdmin()
+                result.success(isDeviceAdminActive())
+            }
+
+            "requestAccessibilityService" -> {
+                requestAccessibilityService()
+                result.success(isAccessibilityServiceEnabled())
+            }
+
+            "checkDeviceAdmin" -> {
+                result.success(isDeviceAdminActive())
+            }
+
+            "checkAccessibilityService" -> {
+                result.success(isAccessibilityServiceEnabled())
+            }
+
+            "checkIgnoreBatteryOptimizations" -> {
+                result.success(isIgnoringBatteryOptimizations())
+            }
+
+            "openDeviceAdminSettings" -> {
+                requestDeviceAdmin()
+                result.success(true)
+            }
+
+            "openAccessibilitySettings" -> {
+                requestAccessibilityService()
+                result.success(true)
+            }
+
+            "openBatteryOptimizationSettings" -> {
+                openBatteryOptimizationSettings()
+                result.success(true)
+            }
+
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun requestDeviceAdmin() {
+        val admin = ComponentName(this, ObeisanceDeviceAdminReceiver::class.java)
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+            putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                "Required for hardware-level policy enforcement and lock controls."
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+    }
+
+    private fun requestAccessibilityService() {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+    }
+
+    private fun isDeviceAdminActive(): Boolean {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, ObeisanceDeviceAdminReceiver::class.java)
+        return dpm.isAdminActive(admin)
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expected = ComponentName(this, ScrollService::class.java).flattenToString()
+        val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+
+        val colonSplitter = TextUtils.SimpleStringSplitter(':').apply {
+            setString(enabledServices)
+        }
+        while (colonSplitter.hasNext()) {
+            if (colonSplitter.next().equals(expected, ignoreCase = true)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun openBatteryOptimizationSettings() {
+        val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:$packageName")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        try {
+            startActivity(requestIntent)
+        } catch (_: Exception) {
+            startActivity(fallbackIntent)
         }
     }
 
