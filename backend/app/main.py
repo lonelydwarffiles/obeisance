@@ -12,6 +12,7 @@ from app.api.routes.central import router as central_router
 from app.api.routes.device import router as device_router
 from app.api.routes.dynamic import router as dynamic_router
 from app.api.routes.growth import router as growth_router
+from app.api.routes.interactions import router as interactions_router
 from app.api.routes.ledger import router as ledger_router
 from app.api.routes.library import router as library_router
 from app.api.routes.metrics import router as metrics_router
@@ -42,6 +43,7 @@ app.include_router(central_router, prefix="/api")
 app.include_router(device_router, prefix="/api")
 app.include_router(dynamic_router, prefix="/api")
 app.include_router(growth_router, prefix="/api")
+app.include_router(interactions_router, prefix="/api")
 app.include_router(ledger_router, prefix="/api")
 app.include_router(library_router, prefix="/api")
 app.include_router(metrics_router, prefix="/api")

@@ -21,6 +21,9 @@ class Settings:
     billing_grace_hours: int = int(os.getenv("BILLING_GRACE_HOURS", "48"))
     push_gateway_url: str = os.getenv("PUSH_GATEWAY_URL", "")
     push_gateway_token: str = os.getenv("PUSH_GATEWAY_TOKEN", "")
+    interaction_cooldown_seconds: int = int(os.getenv("INTERACTION_COOLDOWN_SECONDS", "45"))
+    interaction_rate_limit_per_window: int = int(os.getenv("INTERACTION_RATE_LIMIT_PER_WINDOW", "10"))
+    interaction_rate_window_seconds: int = int(os.getenv("INTERACTION_RATE_WINDOW_SECONDS", "300"))
 
 
 settings = Settings()

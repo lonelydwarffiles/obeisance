@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers/demo_mode_provider.dart';
+import '../../core/services/dom_sub_interaction_service.dart';
 import '../../core/services/tempo_sharing_service.dart';
 import '../dashboard/usage_screen.dart';
 import '../growth/invite_screen.dart';
@@ -36,6 +37,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   List<LeaseSummary> _leases = const [];
   List<TempoShareHistoryEntry> _tempoSummaries = const [];
   TempoCadence _selectedCadence = TempoCadence.daily;
+  final Map<String, String> _contractIdsBySubId = {};
 
   @override
   void initState() {
@@ -52,7 +54,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       final response = await _dio.get<List<dynamic>>('/api/manage/leases');
       final entries = (response.data ?? [])
           .whereType<Map>()
-          .map((entry) => LeaseSummary.fromJson(Map<String, dynamic>.from(entry)))
+          .map((entry) =>
+              LeaseSummary.fromJson(Map<String, dynamic>.from(entry)))
           .toList();
       if (!mounted) {
         return;
@@ -82,10 +85,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       return;
     }
     try {
-      final entries = await ref.read(tempoSharingServiceProvider).fetchDomSummaries(
-            dommeId: widget.dommeId,
-            cadence: _selectedCadence,
-          );
+      final entries =
+          await ref.read(tempoSharingServiceProvider).fetchDomSummaries(
+                dommeId: widget.dommeId,
+                cadence: _selectedCadence,
+              );
       if (!mounted) {
         return;
       }
@@ -115,31 +119,98 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(Icons.chat_bubble_outline, color: Colors.white),
-                title: const Text('Chat', style: TextStyle(color: Colors.white)),
+                leading:
+                    const Icon(Icons.chat_bubble_outline, color: Colors.white),
+                title:
+                    const Text('Chat', style: TextStyle(color: Colors.white)),
                 onTap: () {
                   Navigator.pop(context);
                   context.go('/chat?dommeId=${lease.id}');
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.assignment_turned_in_outlined, color: Colors.white),
-                title: const Text('Assign Task', style: TextStyle(color: Colors.white)),
+                leading: const Icon(Icons.assignment_turned_in_outlined,
+                    color: Colors.white),
+                title: const Text('Assign Task',
+                    style: TextStyle(color: Colors.white)),
                 onTap: () {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(this.context).showSnackBar(
-                    SnackBar(content: Text('Assign Task queued for ${lease.displayName}.')),
+                    SnackBar(
+                        content: Text(
+                            'Assign Task queued for ${lease.displayName}.')),
                   );
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.lock_outline, color: Colors.redAccent),
-                title: const Text('Lock Screen', style: TextStyle(color: Colors.white)),
-                onTap: () {
+                leading: const Icon(Icons.tune_outlined, color: Colors.white),
+                title: const Text('Open Interaction Console',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  final contractId = await _resolveContractId(lease);
+                  if (!mounted) {
+                    return;
+                  }
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(this.context).showSnackBar(
-                    SnackBar(content: Text('Lock command sent to ${lease.displayName}.')),
+                  context.go(
+                    '/interaction-console?subId=${lease.id}&subName=${Uri.encodeQueryComponent(lease.displayName)}&contractId=${contractId ?? ''}',
                   );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.phonelink_setup_outlined,
+                    color: Colors.white),
+                title: const Text('Open Leashed With Contract',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  final contractId = await _resolveContractId(lease);
+                  if (!mounted) {
+                    return;
+                  }
+                  Navigator.pop(context);
+                  context.go(
+                    '/leashed?dommeId=${widget.dommeId}&dommeName=${Uri.encodeQueryComponent('Controller')}&contractId=${contractId ?? ''}',
+                  );
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.handshake_outlined, color: Colors.white),
+                title: const Text('Create/Refresh Contract',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _createOrRefreshContract(lease);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.play_circle_outline, color: Colors.white),
+                title: const Text('Activate Contract',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _activateContract(lease);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.lock_outline, color: Colors.redAccent),
+                title: const Text('Lock Screen',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _sendLockCommand(lease);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.receipt_long_outlined,
+                    color: Colors.white),
+                title: const Text('View Receipts',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _showInteractionReceipts(lease);
                 },
               ),
             ],
@@ -148,6 +219,196 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       },
     );
     return false;
+  }
+
+  Future<void> _createOrRefreshContract(LeaseSummary lease) async {
+    try {
+      final service = ref.read(domSubInteractionServiceProvider);
+      final created = await service.createContract(
+        subId: lease.id,
+        capabilities: const [
+          'lock_device',
+          'message_sub',
+          'restrict_packages',
+        ],
+      );
+      if (!mounted) {
+        return;
+      }
+      _contractIdsBySubId[lease.id] = created.contractId;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Contract ready for ${lease.displayName}.')),
+      );
+    } on DioException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final contractId = _extractContractIdFromError(error);
+      if (contractId != null) {
+        _contractIdsBySubId[lease.id] = contractId;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content:
+                  Text('Using existing contract for ${lease.displayName}.')),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not create contract.')),
+      );
+    }
+  }
+
+  Future<void> _activateContract(LeaseSummary lease) async {
+    final contractId = await _resolveContractId(lease);
+    if (contractId == null) {
+      return;
+    }
+    try {
+      final service = ref.read(domSubInteractionServiceProvider);
+      await service.activateContract(contractId);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Contract activated for ${lease.displayName}.')),
+      );
+    } on DioException {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not activate contract.')),
+      );
+    }
+  }
+
+  Future<void> _sendLockCommand(LeaseSummary lease) async {
+    final contractId = await _resolveContractId(lease);
+    if (contractId == null) {
+      return;
+    }
+
+    try {
+      final service = ref.read(domSubInteractionServiceProvider);
+      final command = await service.issueCommand(
+        contractId,
+        commandType: 'lock_device',
+        requiresSubAck: true,
+        payload: {'source': 'domme_dashboard'},
+        expiresAfterSeconds: 1200,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            command.status == 'pending_confirmation'
+                ? 'Lock command awaiting dom confirmation.'
+                : 'Lock command queued for ${lease.displayName}.',
+          ),
+        ),
+      );
+
+      if (command.status == 'pending_confirmation') {
+        await service.confirmCommand(command.commandId);
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lock command confirmed and queued.')),
+        );
+      }
+    } on DioException {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not issue lock command.')),
+      );
+    }
+  }
+
+  Future<void> _showInteractionReceipts(LeaseSummary lease) async {
+    final contractId = await _resolveContractId(lease);
+    if (contractId == null) {
+      return;
+    }
+
+    try {
+      final service = ref.read(domSubInteractionServiceProvider);
+      final receipts = await service.fetchReceipts(contractId);
+      if (!mounted) {
+        return;
+      }
+      await showModalBottomSheet<void>(
+        context: context,
+        builder: (context) {
+          return SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.all(12),
+              children: [
+                Text(
+                  'Interaction Receipts • ${lease.displayName}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                if (receipts.isEmpty)
+                  const ListTile(
+                    title: Text('No receipts yet.'),
+                  ),
+                for (final item in receipts)
+                  ListTile(
+                    dense: true,
+                    title: Text(item.title),
+                    subtitle: Text(item.detail),
+                    trailing: Text(
+                      _formatTimestamp(item.createdAt),
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      );
+    } on DioException {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load receipts.')),
+      );
+    }
+  }
+
+  Future<String?> _resolveContractId(LeaseSummary lease) async {
+    var contractId = _contractIdsBySubId[lease.id];
+    if (contractId != null && contractId.isNotEmpty) {
+      return contractId;
+    }
+    await _createOrRefreshContract(lease);
+    contractId = _contractIdsBySubId[lease.id];
+    return contractId;
+  }
+
+  String? _extractContractIdFromError(DioException error) {
+    final responseData = error.response?.data;
+    if (responseData is! Map) {
+      return null;
+    }
+    final detail = responseData['detail'];
+    if (detail is Map) {
+      final contractId = detail['contract_id'];
+      if (contractId is String && contractId.isNotEmpty) {
+        return contractId;
+      }
+    }
+    return null;
   }
 
   @override
@@ -247,7 +508,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                               ),
                               trailing: Text(
                                 _formatTimestamp(summary.deliveredAt),
-                                style: const TextStyle(fontSize: 12, color: Colors.black54),
+                                style: const TextStyle(
+                                    fontSize: 12, color: Colors.black54),
                               ),
                             ),
                         ],
@@ -262,8 +524,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       key: ValueKey(lease.id),
                       direction: DismissDirection.horizontal,
                       confirmDismiss: (_) => _showQuickActions(lease),
-                      background: _ActionHintBackground(alignment: Alignment.centerLeft),
-                      secondaryBackground: _ActionHintBackground(alignment: Alignment.centerRight),
+                      background: _ActionHintBackground(
+                          alignment: Alignment.centerLeft),
+                      secondaryBackground: _ActionHintBackground(
+                          alignment: Alignment.centerRight),
                       child: Card(
                         margin: const EdgeInsets.only(bottom: 10),
                         child: ListTile(
@@ -275,7 +539,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                               Icon(
                                 Icons.circle,
                                 size: 12,
-                                color: lease.online ? Colors.green : Colors.grey,
+                                color:
+                                    lease.online ? Colors.green : Colors.grey,
                               ),
                               const SizedBox(width: 6),
                               Text(lease.online ? 'Online' : 'Offline'),
@@ -340,7 +605,8 @@ class LeaseSummary {
   factory LeaseSummary.fromJson(Map<String, dynamic> json) {
     return LeaseSummary(
       id: (json['id'] as String?) ?? '',
-      displayName: (json['name'] as String?) ?? (json['id'] as String?) ?? 'Unknown Sub',
+      displayName:
+          (json['name'] as String?) ?? (json['id'] as String?) ?? 'Unknown Sub',
       batteryPercentage: (json['battery_percentage'] as int?) ?? 0,
       online: (json['online'] as bool?) ?? false,
     );

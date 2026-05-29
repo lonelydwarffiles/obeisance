@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/services/dom_sub_interaction_service.dart';
 import '../../core/services/mqtt_service.dart';
 import '../../core/services/telemetry_service.dart';
 import '../../core/services/tempo_sharing_service.dart';
@@ -13,10 +14,12 @@ class LeashedScreen extends ConsumerStatefulWidget {
     super.key,
     this.dommeName = 'Controller',
     this.dommeId = 'unknown',
+    this.contractId = '',
   });
 
   final String dommeName;
   final String dommeId;
+  final String contractId;
 
   @override
   ConsumerState<LeashedScreen> createState() => _LeashedScreenState();
@@ -24,7 +27,8 @@ class LeashedScreen extends ConsumerStatefulWidget {
 
 class _LeashedScreenState extends ConsumerState<LeashedScreen> {
   static const _backendBaseUrl = 'http://<backend-url>';
-  static const MethodChannel _taskChannel = MethodChannel('obeisance.mdm/tasks');
+  static const MethodChannel _taskChannel =
+      MethodChannel('obeisance.mdm/tasks');
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -45,6 +49,10 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
   List<TempoShareHistoryEntry> _tempoHistory = const [];
   bool _tempoBusy = false;
   String? _tempoError;
+  bool _interactionBusy = false;
+  String? _interactionError;
+  List<ActiveConstraint> _activeConstraints = const [];
+  List<InteractionReceipt> _interactionReceipts = const [];
 
   @override
   void initState() {
@@ -59,7 +67,8 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
     });
 
     try {
-      final telemetry = await ref.read(telemetryServiceProvider).getDeviceStats();
+      final telemetry =
+          await ref.read(telemetryServiceProvider).getDeviceStats();
       final hardwareUuid = telemetry['hardware_uuid'] as String?;
       final response = await _dio.get<List<dynamic>>(
         '/api/tasks/daily',
@@ -82,6 +91,7 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
       if (hardwareUuid != null && hardwareUuid.isNotEmpty) {
         await _refreshTempoSharing(hardwareUuid);
       }
+      await _refreshInteractions();
     } catch (_) {
       if (!mounted) {
         return;
@@ -93,6 +103,71 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshInteractions() async {
+    if (widget.contractId.isEmpty) {
+      return;
+    }
+    try {
+      final service = ref.read(domSubInteractionServiceProvider);
+      final constraints =
+          await service.fetchActiveConstraints(widget.contractId);
+      final receipts = await service.fetchReceipts(widget.contractId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _activeConstraints = constraints;
+        _interactionReceipts = receipts;
+        _interactionError = null;
+      });
+    } on DioException {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _interactionError = 'Interaction data unavailable right now.';
+      });
+    }
+  }
+
+  Future<void> _triggerSafeMode() async {
+    if (widget.contractId.isEmpty) {
+      return;
+    }
+    setState(() {
+      _interactionBusy = true;
+    });
+
+    try {
+      final service = ref.read(domSubInteractionServiceProvider);
+      await service.triggerSafeMode(
+        widget.contractId,
+        reason: 'Sub requested emergency decompression window',
+        durationMinutes: 30,
+      );
+      await _refreshInteractions();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Emergency safe mode activated for 30m.')),
+      );
+    } on DioException {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to trigger safe mode.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _interactionBusy = false;
         });
       }
     }
@@ -176,7 +251,8 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
       }
       setState(() {
         _tasks = _tasks
-            .map((entry) => entry.id == task.id ? entry.copyWith(completed: true) : entry)
+            .map((entry) =>
+                entry.id == task.id ? entry.copyWith(completed: true) : entry)
             .toList();
       });
     } on PlatformException {
@@ -184,7 +260,8 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Camera proof flow unavailable on this build.')),
+        const SnackBar(
+            content: Text('Camera proof flow unavailable on this build.')),
       );
     }
   }
@@ -248,12 +325,15 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
                     child: ListTile(
                       title: const Text(
                         'Telemetry',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w700),
                       ),
                       subtitle: Text(
                         'Battery: $_battery% • Connection: ${_connected ? 'Online' : 'Offline'}',
                         style: TextStyle(
-                          color: _connected ? Colors.greenAccent : Colors.orangeAccent,
+                          color: _connected
+                              ? Colors.greenAccent
+                              : Colors.orangeAccent,
                         ),
                       ),
                     ),
@@ -264,6 +344,103 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
                       child: Text(
                         _error!,
                         style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ),
+                  if (widget.contractId.isNotEmpty)
+                    Card(
+                      color: const Color(0xFF171717),
+                      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Interaction Status',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: _interactionBusy
+                                      ? null
+                                      : _triggerSafeMode,
+                                  child: const Text('Emergency Safe Mode'),
+                                ),
+                              ],
+                            ),
+                            if (_interactionError != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Text(
+                                  _interactionError!,
+                                  style:
+                                      const TextStyle(color: Colors.redAccent),
+                                ),
+                              ),
+                            if (_activeConstraints.isEmpty)
+                              const Text(
+                                'No active interaction constraints.',
+                                style: TextStyle(color: Colors.white60),
+                              ),
+                            for (final item in _activeConstraints.take(4))
+                              ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  '${item.key}: ${item.value}',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                                subtitle: Text(
+                                  item.reason ?? 'No reason provided',
+                                  style: const TextStyle(color: Colors.white60),
+                                ),
+                                trailing: Text(
+                                  _formatTimestamp(item.expiresAt),
+                                  style: const TextStyle(
+                                      color: Colors.white54, fontSize: 12),
+                                ),
+                              ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Recent Receipts',
+                              style: TextStyle(
+                                  color: Colors.white70,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                            if (_interactionReceipts.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'No interaction receipts yet.',
+                                  style: TextStyle(color: Colors.white60),
+                                ),
+                              ),
+                            for (final receipt in _interactionReceipts.take(3))
+                              ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  receipt.title,
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                                subtitle: Text(
+                                  receipt.detail,
+                                  style: const TextStyle(color: Colors.white60),
+                                ),
+                                trailing: Text(
+                                  _formatTimestamp(receipt.createdAt),
+                                  style: const TextStyle(
+                                      color: Colors.white54, fontSize: 12),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   Expanded(
@@ -322,27 +499,33 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
                                       const SizedBox(width: 12),
                                       DropdownButton<TempoCadence>(
                                         dropdownColor: const Color(0xFF222222),
-                                        value: settings?.cadence ?? TempoCadence.weekly,
+                                        value: settings?.cadence ??
+                                            TempoCadence.weekly,
                                         items: TempoCadence.values
                                             .map(
                                               (cadence) => DropdownMenuItem(
                                                 value: cadence,
                                                 child: Text(
                                                   cadence.label,
-                                                  style: const TextStyle(color: Colors.white),
+                                                  style: const TextStyle(
+                                                      color: Colors.white),
                                                 ),
                                               ),
                                             )
                                             .toList(),
-                                        onChanged: (_tempoBusy || settings == null || !settings.sharingEnabled)
+                                        onChanged: (_tempoBusy ||
+                                                settings == null ||
+                                                !settings.sharingEnabled)
                                             ? null
                                             : (value) {
                                                 if (value == null) {
                                                   return;
                                                 }
                                                 _saveTempoSettings(
-                                                  enabled: settings.sharingEnabled,
-                                                  paused: settings.sharingPaused,
+                                                  enabled:
+                                                      settings.sharingEnabled,
+                                                  paused:
+                                                      settings.sharingPaused,
                                                   cadence: value,
                                                   consentAcknowledged: true,
                                                 );
@@ -350,17 +533,24 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
                                       ),
                                       const Spacer(),
                                       TextButton(
-                                        onPressed: (_tempoBusy || settings == null || !settings.sharingEnabled)
+                                        onPressed: (_tempoBusy ||
+                                                settings == null ||
+                                                !settings.sharingEnabled)
                                             ? null
                                             : () => _saveTempoSettings(
-                                                  enabled: settings.sharingEnabled,
-                                                  paused: !settings.sharingPaused,
+                                                  enabled:
+                                                      settings.sharingEnabled,
+                                                  paused:
+                                                      !settings.sharingPaused,
                                                   cadence: settings.cadence,
                                                   consentAcknowledged: true,
                                                 ),
                                         child: Text(
-                                          settings?.sharingPaused == true ? 'Resume' : 'Pause',
-                                          style: const TextStyle(color: Color(0xFFE0B84C)),
+                                          settings?.sharingPaused == true
+                                              ? 'Resume'
+                                              : 'Pause',
+                                          style: const TextStyle(
+                                              color: Color(0xFFE0B84C)),
                                         ),
                                       ),
                                     ],
@@ -370,7 +560,8 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
                                       padding: const EdgeInsets.only(top: 6),
                                       child: Text(
                                         _tempoError!,
-                                        style: const TextStyle(color: Colors.redAccent),
+                                        style: const TextStyle(
+                                            color: Colors.redAccent),
                                       ),
                                     ),
                                   const SizedBox(height: 8),
@@ -393,15 +584,19 @@ class _LeashedScreenState extends ConsumerState<LeashedScreen> {
                                       contentPadding: EdgeInsets.zero,
                                       title: Text(
                                         '${entry.cadence.label} • ${entry.deliveryStatus}',
-                                        style: const TextStyle(color: Colors.white),
+                                        style: const TextStyle(
+                                            color: Colors.white),
                                       ),
                                       subtitle: Text(
                                         'Avg ${entry.averageVelocity.toStringAsFixed(1)} px/s • Samples ${entry.sampleCount}',
-                                        style: const TextStyle(color: Colors.white60),
+                                        style: const TextStyle(
+                                            color: Colors.white60),
                                       ),
                                       trailing: Text(
                                         _formatTimestamp(entry.deliveredAt),
-                                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                        style: const TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 12),
                                       ),
                                     ),
                                 ],

@@ -5,8 +5,10 @@ import '../features/auth/login_screen.dart';
 import '../features/auth/registration_gate.dart';
 import '../features/billing/payment_screen.dart';
 import '../features/chat/chat_screen.dart';
+import '../features/central/central_dashboard_screen.dart';
 import '../features/demo/demo_mode_screen.dart';
 import '../features/domme/dashboard_screen.dart';
+import '../features/domme/interaction_console_screen.dart';
 import '../features/economy/store_screen.dart';
 import '../features/growth/invite_screen.dart';
 import '../features/notes/knot_screen.dart';
@@ -50,6 +52,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => LeashedScreen(
           dommeName: state.uri.queryParameters['dommeName'] ?? 'Controller',
           dommeId: state.uri.queryParameters['dommeId'] ?? 'unknown',
+          contractId: state.uri.queryParameters['contractId'] ?? '',
         ),
       ),
       GoRoute(
@@ -65,6 +68,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: '/interaction-console',
+        builder: (context, state) => InteractionConsoleScreen(
+          subId: state.uri.queryParameters['subId'] ?? '',
+          subName: state.uri.queryParameters['subName'] ?? 'Sub',
+          contractId: state.uri.queryParameters['contractId'] ?? '',
+        ),
+      ),
+      GoRoute(
+        path: '/central-dashboard',
+        builder: (context, state) => CentralDashboardScreen(
+          centralUserId: state.uri.queryParameters['centralUserId'] ?? '',
+        ),
+      ),
+      GoRoute(
         path: '/growth',
         builder: (context, state) => const InviteScreen(),
       ),
@@ -72,7 +89,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/store',
         builder: (context, state) => StoreScreen(
           deviceId: state.uri.queryParameters['deviceId'] ?? '',
-          currencyName: state.uri.queryParameters['currencyName'] ?? 'Compliance Credits',
+          currencyName:
+              state.uri.queryParameters['currencyName'] ?? 'Compliance Credits',
         ),
       ),
       GoRoute(

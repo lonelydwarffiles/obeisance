@@ -76,6 +76,24 @@ class PetitionStatus(str, enum.Enum):
     expired = "expired"
 
 
+class RelationshipStatus(str, enum.Enum):
+    pending = "pending"
+    active = "active"
+    paused = "paused"
+    revoked = "revoked"
+    archived = "archived"
+
+
+class CommandStatus(str, enum.Enum):
+    pending_confirmation = "pending_confirmation"
+    queued = "queued"
+    delivered = "delivered"
+    acknowledged = "acknowledged"
+    rejected = "rejected"
+    expired = "expired"
+    canceled = "canceled"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -132,6 +150,14 @@ class User(Base):
     audit_entries: Mapped[list["AuditLog"]] = relationship(
         back_populates="actor",
         foreign_keys="AuditLog.actor_user_id",
+    )
+    dom_relationship_contracts: Mapped[list["RelationshipContract"]] = relationship(
+        back_populates="dom",
+        foreign_keys="RelationshipContract.dom_id",
+    )
+    sub_relationship_contracts: Mapped[list["RelationshipContract"]] = relationship(
+        back_populates="sub",
+        foreign_keys="RelationshipContract.sub_id",
     )
 
 
@@ -623,3 +649,103 @@ class TempoShareSummary(Base):
 
     device: Mapped[Device] = relationship(back_populates="tempo_share_summaries")
     domme: Mapped[User] = relationship(foreign_keys=[domme_id])
+
+
+class RelationshipContract(Base):
+    __tablename__ = "relationship_contracts"
+    __table_args__ = (
+        UniqueConstraint("dom_id", "sub_id", "device_id", name="uq_relationship_dom_sub_device"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dom_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    sub_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=True)
+    status: Mapped[RelationshipStatus] = mapped_column(
+        Enum(RelationshipStatus, name="relationship_status"),
+        nullable=False,
+        default=RelationshipStatus.pending,
+    )
+    capabilities: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    revoked_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    dom: Mapped[User] = relationship(back_populates="dom_relationship_contracts", foreign_keys=[dom_id])
+    sub: Mapped[User] = relationship(back_populates="sub_relationship_contracts", foreign_keys=[sub_id])
+    device: Mapped[Device | None] = relationship(foreign_keys=[device_id])
+    command_events: Mapped[list["RelationshipCommand"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan"
+    )
+    receipts: Mapped[list["InteractionReceipt"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan"
+    )
+    safe_mode_events: Mapped[list["SafetyStopEvent"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan"
+    )
+
+
+class RelationshipCommand(Base):
+    __tablename__ = "relationship_commands"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("relationship_contracts.id"), nullable=False
+    )
+    command_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[CommandStatus] = mapped_column(
+        Enum(CommandStatus, name="relationship_command_status"),
+        nullable=False,
+        default=CommandStatus.queued,
+    )
+    requires_sub_ack: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    requested_by_dom_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    execute_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    contract: Mapped[RelationshipContract] = relationship(back_populates="command_events")
+    requested_by_dom: Mapped[User] = relationship(foreign_keys=[requested_by_dom_id])
+
+
+class InteractionReceipt(Base):
+    __tablename__ = "interaction_receipts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("relationship_contracts.id"), nullable=False
+    )
+    command_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("relationship_commands.id"), nullable=True
+    )
+    visible_to_sub: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    detail: Mapped[str] = mapped_column(String(2000), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    contract: Mapped[RelationshipContract] = relationship(back_populates="receipts")
+    command: Mapped[RelationshipCommand | None] = relationship(foreign_keys=[command_id])
+
+
+class SafetyStopEvent(Base):
+    __tablename__ = "safety_stop_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("relationship_contracts.id"), nullable=False
+    )
+    triggered_by_sub_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    contract: Mapped[RelationshipContract] = relationship(back_populates="safe_mode_events")
+    triggered_by_sub: Mapped[User] = relationship(foreign_keys=[triggered_by_sub_id])

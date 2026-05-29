@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'api_client.dart';
+import 'security_provider.dart';
 import 'security_service.dart';
 
 class AuthService {
@@ -32,23 +34,7 @@ class AuthService {
   }
 }
 
-final authDioProvider = Provider<Dio>((ref) {
-  return Dio(
-    BaseOptions(
-      baseUrl: 'http://<backend-url>',
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
-      headers: const {'Content-Type': 'application/json'},
-    ),
-  );
-});
-
-final securityServiceProvider = Provider<SecurityService>((ref) {
-  return SecurityService(
-    baseUrl: 'http://<backend-url>',
-    allowedSha256Pins: const {},
-  );
-});
+final authDioProvider = Provider<Dio>((ref) => ref.read(apiClientProvider));
 
 final authServiceProvider = Provider<AuthService>((ref) {
   return AuthService(

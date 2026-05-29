@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'api_client.dart';
+
 enum TempoCadence {
   daily,
   weekly,
@@ -130,13 +132,5 @@ class TempoSharingService {
 }
 
 final tempoSharingServiceProvider = Provider<TempoSharingService>((ref) {
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: 'http://<backend-url>',
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
-    ),
-  );
-  ref.onDispose(dio.close);
-  return TempoSharingService(dio);
+  return TempoSharingService(ref.read(apiClientProvider));
 });
